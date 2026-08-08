@@ -1,0 +1,144 @@
+# Default configuration for the Misformat Guard plugin.
+#
+# Settings resolve in this priority order (highest first):
+# 1. Per-project: <project>/.a0proj/agents/<profile>/plugins/misformat_guard/config.json
+# 2. Per-agent: usr/agents/<profile>/plugins/misformat_guard/config.json
+# 3. Global: usr/plugins/misformat_guard/config.json
+# 4. Defaults: this file (loaded only if no config.json exists at the active scope)
+#
+# The plugin also honours Agent Zero's global / per-project / per-agent toggle files
+# (.toggle-1 / .toggle-0). When the plugin is toggled OFF, every layer becomes a no-op.
+
+# Master switch. When false, all extensions short-circuit and the plugin
+# becomes a no-op (the chat model is left to its own misformat recovery).
+enabled: true
+
+# ---------------------------------------------------------------------------
+# Layer 1 - Primary cascade (v0.4.0+)
+# ---------------------------------------------------------------------------
+# @extensible wrap on Agent.call_chat_model_turn. After the chat model
+# returns, if the response fails the JSON tool extractor, the utility model
+# is called to repair it. The repaired response is substituted into the
+# LLMResult before the monologue loop sees the bad text. Never stalls.
+primary_cascade_enabled: true
+
+# ---------------------------------------------------------------------------
+# Layer 2 - Safety-net cascade
+# ---------------------------------------------------------------------------
+# @extensible wrap on Agent.process_tools. Fires only if the primary cascade
+# missed (e.g. utility model returned syntactically valid but semantically
+# broken JSON, or the cascade was rate-limited out). Catches the
+# misformat-else-branch, re-invokes the utility model on the buffered stream
+# text, and re-runs process_tools with the repaired text.
+process_tools_fallback: true
+
+# ---------------------------------------------------------------------------
+# Layer 3 - Legacy hardened parser (v0.3.0 defense-in-depth)
+# ---------------------------------------------------------------------------
+# Vendored DirtyJson with a tighter _is_closing_quote heuristic. Runs
+# inside response_stream_end before the cascade fires. Useful as a fast
+# pre-filter, but the user memory notes the upstream parser is already
+# robust in most cases. Disabled by default in v0.4.0; enable if you see
+# the cascade being called more than you'd like.
+repair_enabled: false
+
+# Cheap path: when true, only run the hardened parser when the core parser
+# already failed. When false, run it on every response. Leave true to avoid
+# per-turn overhead in the happy path.
+repair_only_on_misformat: true
+
+# ---------------------------------------------------------------------------
+# Layer 4 - Prompt steering
+# ---------------------------------------------------------------------------
+# Append a "Quoting rules" block to the system prompt. Reduces the rate of
+# misformat-inducing responses by steering the LLM to use safe quote forms.
+quote_rules_enabled: true
+
+# Path (relative to the plugin directory) of the user-editable rules text.
+# Edit this file to customize the rules without touching Python.
+quote_rules_path: prompts/quote_rules.md
+
+# When true, the misformat warning message is appended with a one-liner
+# naming the common cause (unescaped quote) so the LLM self-corrects on the
+# next retry.
+clarify_misformat_warning: true
+
+# ---------------------------------------------------------------------------
+# Cascade configuration
+# ---------------------------------------------------------------------------
+# When the chat model produces a response that the core JSON parser cannot
+# extract a tool from, the cascade invokes the UTILITY model (cheap, NOT
+# the chat model) to repair the response into valid JSON. The repaired
+# response is substituted for the broken one, the core parser succeeds, and
+# the agent continues naturally. Never stalls, never aborts.
+
+cascade:
+  # off             -> cascade disabled, fall through to the framework's
+  #                    own misformat warning (LLM retries on its own)
+  # utility_repair  -> call call_utility_model to repair (RECOMMENDED)
+  mode: "utility_repair"
+
+  # Fire only when the consecutive-misformat streak is at least this high.
+  # 1 = fire on the first misformat (cheap path catches it). Higher values
+  #     let the quote_rules prompt-steering try to self-correct first.
+  trigger: 1
+
+  # Maximum number of utility-repair calls in a single misformat streak.
+  # After this many repairs in a row, the cascade backs off (prevents
+  # infinite utility burning on a truly broken chat model).
+  max_per_streak: 2
+
+  # Absolute cap on cascade calls per chat session. Prevents one chat from
+  # using up the utility budget.
+  max_total_per_chat: 6
+
+  # Utility model call timeout. Keep it short -- the utility model is fast.
+  timeout_s: 30
+
+  # Path (relative to the plugin directory) of the user-editable system
+  # prompt for the utility repair call. If empty, the plugin uses the
+  # built-in default in prompts/utility_repair.md.
+  system_prompt_path: "prompts/utility_repair.md"
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+# Collect in-memory counters (repairs, misformats, aborts, cascade calls) and
+# surface them in the WebUI dashboard. Disable to skip the (tiny) overhead.
+stats_enabled: true
+
+# Print diagnostic lines to stderr on every event. Useful for debugging;
+# can be noisy in production.
+verbose: false
+
+# ---------------------------------------------------------------------------
+# v0.4.1 - Upstream cost-circuit-breaker coordination
+# ---------------------------------------------------------------------------
+# Agent Zero's framework has its own cost circuit breaker
+# (extensions/python/_functions/agent/Agent/hist_add_warning/end/
+# _90_stop_unusable_response_loop.py) that raises HandledException after
+# max_consecutive_unusable_responses (default 2) consecutive misformat
+# or repeat warnings. The misformat_guard plugin hooks into the same
+# extension point to keep that counter from triggering on misformats
+# the cascade has handled.
+
+# When true, the v0.4.1 _10_misformat_consume_warning.py hook rewrites
+# the upstream counter on every misformat warning so the framework
+# never sees a streak longer than 1. Disable this only if the framework's
+# own circuit breaker should run unmodified (e.g. for measuring the
+# raw misformat rate).
+reset_unusable_loop_on_warning: true
+
+# Floor for the framework's max_consecutive_unusable_responses setting
+# when the plugin is installed. The install() lifecycle raises the
+# setting to at least this value, and uninstall() restores the prior
+# value. Defends against the rare case where the new hook's extension
+# does not load (extension cache, framework rename, etc.) -- the
+# cascade then has a wider retry window even without the hook.
+consecutive_unusable_floor: 5
+
+# When true, install() applies the consecutive_unusable_floor to the
+# framework's settings. When false, install() leaves the framework's
+# setting alone (only the new hook is active). Useful for users who
+# want to manage the setting themselves from the WebUI.
+install_overrides_consecutive_floor: true

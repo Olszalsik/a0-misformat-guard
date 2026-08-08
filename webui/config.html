@@ -1,0 +1,330 @@
+<!--
+  misformat_guard WebUI configuration panel (v0.4.1).
+
+  All settings are editable from the UI; nothing requires editing
+  default_config.yaml by hand. Changes are persisted to the framework
+  plugin config (per-project / per-agent / global resolution is
+  handled by helpers.plugins.update_plugin_config).
+
+  Endpoints used:
+    POST /api/plugins/misformat_guard/config   GET = read, POST = persist
+    POST /api/plugins/misformat_guard/stats    live counter snapshot
+    POST /api/plugins/misformat_guard/reset    clear counters
+    POST /api/plugins/misformat_guard/health   version + cascade summary
+
+  Counter values use data-mg-stat="key" attributes so the
+  dashboard-store.js auto-refresh updates them in place.
+-->
+<div x-data="misformatGuardSettings()" x-init="init()" x-cloak>
+
+  <!-- ============================================================ -->
+  <!-- LIVE COUNTERS -->
+  <!-- ============================================================ -->
+  <div class="settings-section" style="background: rgba(40,80,120,0.10); padding: 12px; border-radius: 6px; border: 1px solid rgba(80,160,200,0.25);">
+    <h4 style="margin: 0 0 8px 0;">
+      <span x-text="ok ? '🟢' : '🔴'"></span>
+      Live counters
+      <small style="opacity: 0.6; font-weight: normal;">
+        (auto-refresh every 5s; click <em>Refresh</em> to update now)
+      </small>
+    </h4>
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px; font-size: 12px;">
+      <div>Misformats<br><strong style="font-size: 1.4em;" data-mg-stat="misformats_total">0</strong></div>
+      <div>Repairs<br><strong style="font-size: 1.4em;" data-mg-stat="repairs_total">0</strong></div>
+      <div>Repair failures<br><strong style="font-size: 1.4em;" data-mg-stat="repair_failures_total">0</strong></div>
+      <div>Aborts<br><strong style="font-size: 1.4em; color: #facc15;" data-mg-stat="aborts_total">0</strong></div>
+      <div>Cascade calls<br><strong style="font-size: 1.4em;" data-mg-stat="cascade_calls_total">0</strong></div>
+      <div>Cascade repairs<br><strong style="font-size: 1.4em; color: #4ade80;" data-mg-stat="cascade_repairs_total">0</strong></div>
+      <div>Cascade failures<br><strong style="font-size: 1.4em; color: #f87171;" data-mg-stat="cascade_failures_total">0</strong></div>
+      <div>Cascade attempts<br><strong style="font-size: 1.4em;" data-mg-stat="cascade_attempts_total">0</strong></div>
+      <div>Last refresh<br><strong style="font-size: 1.1em;" x-text="lastRefresh || '—'"></strong></div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- MASTER SWITCH -->
+  <!-- ============================================================ -->
+  <div class="settings-section">
+    <label style="display: block; margin: 4px 0;">
+      <input type="checkbox" x-model="cfg.enabled" />
+      <strong>Plugin enabled</strong>
+    </label>
+    <small style="opacity: 0.7;">
+      When OFF, all extensions short-circuit and the chat model retries on
+      its own. When ON, the values below take effect on the next agent turn.
+    </small>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 1 - PRIMARY CASCADE -->
+  <!-- ============================================================ -->
+  <div class="settings-section">
+    <h4 style="margin: 12px 0 6px 0;">Layer 1 — Primary cascade</h4>
+    <label style="display: block;">
+      <input type="checkbox" x-model="cfg.primary_cascade_enabled" />
+      <strong>Repair broken chat-model responses with the utility model</strong>
+    </label>
+    <small style="opacity: 0.7;">
+      Sits at <code>call_chat_model_turn/end</code>. When the chat model emits
+      a response the framework's JSON tool extractor cannot parse, the cheap
+      utility model is asked to repair it. The repaired text replaces the
+      broken one before the monologue loop ever sees it.
+    </small>
+    <label style="display: block; margin-top: 6px;">
+      <input type="checkbox" x-model="cfg.process_tools_fallback" />
+      <strong>Safety-net cascade on <code>process_tools/end</code></strong>
+    </label>
+    <small style="opacity: 0.7;">
+      Catches the rare misformat that slipped past the primary cascade (e.g.
+      utility model returned syntactically valid but semantically broken JSON).
+      Re-invokes <code>process_tools</code> with the repaired text.
+    </small>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 2 - HARDENED PARSER -->
+  <!-- ============================================================ -->
+  <div class="settings-section">
+    <h4 style="margin: 12px 0 6px 0;">Layer 2 — Hardened parser</h4>
+    <label style="display: block;">
+      <input type="checkbox" x-model="cfg.repair_enabled" />
+      <strong>Repair with the vendored DirtyJson before giving up</strong>
+    </label>
+    <small style="opacity: 0.7;">Handles unescaped quotes inside long string values.</small>
+    <label style="display: block; margin-top: 6px;">
+      <input type="checkbox" x-model="cfg.repair_only_on_misformat" />
+      <strong>Cheap path: only run on misformat</strong>
+    </label>
+    <small style="opacity: 0.7;">When ON, the hardened parser runs only when the core parser already failed (zero per-turn cost on the happy path).</small>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 3 - PROMPT STEERING -->
+  <!-- ============================================================ -->
+  <div class="settings-section">
+    <h4 style="margin: 12px 0 6px 0;">Layer 3 — Prompt steering</h4>
+    <label style="display: block;">
+      <input type="checkbox" x-model="cfg.quote_rules_enabled" />
+      <strong>Append quoting rules to the system prompt</strong>
+    </label>
+    <small style="opacity: 0.7;">Steers the LLM to use safe quote forms and reduces misformat rate at the source.</small>
+    <label style="display: block; margin-top: 6px;">
+      <input type="checkbox" x-model="cfg.clarify_misformat_warning" />
+      <strong>Rewrite the misformat warning to name the common cause</strong>
+    </label>
+    <small style="opacity: 0.7;">Appends a one-liner explaining that unescaped quotes are the dominant cause, so the LLM self-corrects.</small>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 4 - CASCADE CONFIGURATION -->
+  <!-- ============================================================ -->
+  <div class="settings-section" style="background: rgba(40,120,40,0.10); padding: 12px; border-radius: 6px; border: 1px solid rgba(120,200,120,0.25);">
+    <h4 style="margin: 0 0 6px 0;">Layer 4 — Cascade configuration</h4>
+    <small style="opacity: 0.7;">
+      The cascade uses the cheap utility model (not the chat model) to repair
+      broken responses. The chat model is never called for repairs.
+    </small>
+
+    <div style="margin-top: 8px;">
+      <label>Mode</label>
+      <select x-model="cfg.cascade.mode" style="min-width: 12em;">
+        <option value="off">off (no cascade)</option>
+        <option value="utility_repair">utility_repair (recommended)</option>
+      </select>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-top: 8px;">
+      <div>
+        <label>Trigger (misformat streak)</label>
+        <input type="number" min="1" max="10" step="1" x-model.number="cfg.cascade.trigger" style="width: 5em;" />
+        <small>1 = fire on first misformat.</small>
+      </div>
+      <div>
+        <label>Max per streak</label>
+        <input type="number" min="1" max="20" step="1" x-model.number="cfg.cascade.max_per_streak" style="width: 5em;" />
+        <small>Give up after N repairs in one streak. Set 1+ — 0 means "never".</small>
+      </div>
+      <div>
+        <label>Max total per chat</label>
+        <input type="number" min="1" max="100" step="1" x-model.number="cfg.cascade.max_total_per_chat" style="width: 5em;" />
+        <small>Absolute cap per chat session. Set 1+ — 0 means "never".</small>
+      </div>
+      <div>
+        <label>Utility timeout (sec)</label>
+        <input type="number" min="5" max="120" step="1" x-model.number="cfg.cascade.timeout_s" style="width: 5em;" />
+        <small>Default 30s.</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 5 - UPSTREAM CIRCUIT-BREAKER COORDINATION (v0.4.1) -->
+  <!-- ============================================================ -->
+  <div class="settings-section" style="background: rgba(120,80,40,0.10); padding: 12px; border-radius: 6px; border: 1px solid rgba(200,160,80,0.25);">
+    <h4 style="margin: 0 0 6px 0;">Layer 5 — Upstream circuit-breaker coordination</h4>
+    <small style="opacity: 0.7;">
+      Agent Zero's framework has its own cost circuit breaker that stops the
+      agent after 2 consecutive <em>fw.msg_misformat.md</em> warnings. v0.4.1
+      hooks the same extension point to keep that counter from triggering on
+      cascade-handled misformats.
+    </small>
+    <label style="display: block; margin-top: 6px;">
+      <input type="checkbox" x-model="cfg.reset_unusable_loop_on_warning" />
+      <strong>Reset the upstream counter on every misformat warning</strong>
+    </label>
+    <small style="opacity: 0.7;">
+      The <code>_10_misformat_consume_warning</code> hook runs before
+      <code>_90_stop_unusable_response_loop</code> and rewrites
+      <code>loop_data.params_persistent["_unusable_response_failures"]</code>
+      so the framework never sees a streak longer than 1. Disable this only if
+      you want to measure the raw misformat rate.
+    </small>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-top: 8px;">
+      <div>
+        <label>Consecutive-unusable floor</label>
+        <input type="number" min="2" max="50" step="1" x-model.number="cfg.consecutive_unusable_floor" style="width: 5em;" />
+        <small>Defense in depth: install() raises the framework's setting to at least this value.</small>
+      </div>
+      <div>
+        <label style="display: block; margin-top: 1.4em;">
+          <input type="checkbox" x-model="cfg.install_overrides_consecutive_floor" />
+          <strong>Apply the floor on install/uninstall</strong>
+        </label>
+        <small style="opacity: 0.7;">When ON, install() bumps the setting and uninstall() restores it.</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- DIAGNOSTICS -->
+  <!-- ============================================================ -->
+  <div class="settings-section">
+    <h4 style="margin: 0 0 6px 0;">Diagnostics</h4>
+    <label style="display: block;">
+      <input type="checkbox" x-model="cfg.stats_enabled" />
+      <strong>Collect in-memory counters</strong>
+    </label>
+    <small style="opacity: 0.7;">Required for the live counter display above. Disable for tiny overhead savings.</small>
+    <label style="display: block; margin-top: 6px;">
+      <input type="checkbox" x-model="cfg.verbose" />
+      <strong>Verbose logging to stderr</strong>
+    </label>
+    <small style="opacity: 0.7;">Can be noisy in production.</small>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- ACTION BUTTONS -->
+  <!-- ============================================================ -->
+  <div class="settings-section" style="margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+    <button type="button" :disabled="busy" @click="save()"
+      style="padding: 6px 16px; border-radius: 4px; border: 1px solid rgba(120,200,120,0.4); background: rgba(40,120,40,0.2); color: inherit; cursor: pointer; font-weight: 600;">
+      <span x-show="!busy">💾 Save settings</span>
+      <span x-show="busy">Saving…</span>
+    </button>
+    <button type="button" :disabled="busy" @click="refresh()"
+      style="padding: 6px 12px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); background: transparent; color: inherit; cursor: pointer;">
+      🔄 Refresh from disk
+    </button>
+    <button type="button" :disabled="busy" @click="resetCounters()"
+      style="padding: 6px 12px; border-radius: 4px; border: 1px solid rgba(255,200,100,0.4); background: rgba(120,80,0,0.2); color: inherit; cursor: pointer;">
+      🗑️ Reset counters
+    </button>
+    <span x-show="msg" x-text="msg"
+      :style="{ color: msgIsError ? '#f87171' : '#4ade80', fontSize: '12px', marginLeft: '8px' }"
+      style="margin-left: 8px; font-size: 12px;"></span>
+  </div>
+
+  <small style="display: block; margin-top: 12px; opacity: 0.6; font-size: 11px;">
+    Settings are persisted to the framework plugin config (per-project /
+    per-agent / global). The <code>default_config.yaml</code> file holds
+    the built-in fallbacks; the framework chain is
+    <code>project → agent profile → global → defaults</code>.
+  </small>
+
+</div>
+
+<script>
+  // Inline component definition (no module import needed - works inside
+  // the framework's settings modal where module scripts are restricted).
+  function misformatGuardSettings() {
+    return {
+      busy: false,
+      ok: true,
+      msg: '',
+      msgIsError: false,
+      lastRefresh: '',
+      cfg: {
+        enabled: true,
+        primary_cascade_enabled: true,
+        process_tools_fallback: true,
+        repair_enabled: true,
+        repair_only_on_misformat: true,
+        quote_rules_enabled: true,
+        clarify_misformat_warning: true,
+        stats_enabled: true,
+        verbose: false,
+        reset_unusable_loop_on_warning: true,
+        consecutive_unusable_floor: 5,
+        install_overrides_consecutive_floor: true,
+        cascade: { mode: 'utility_repair', trigger: 1, max_per_streak: 2, max_total_per_chat: 6, timeout_s: 30 },
+      },
+      async init() {
+        await this.refresh();
+        // The dashboard-store.js polls /stats every 5s and updates
+        // elements with data-mg-stat. We just stamp the time.
+        if (window.MisformatGuardDashboard && window.MisformatGuardDashboard.stats) {
+          setInterval(() => { this.lastRefresh = new Date().toLocaleTimeString(); }, 5000);
+        }
+      },
+      async refresh() {
+        this.busy = true; this.msg = '';
+        try {
+          const api = window.MisformatGuardDashboard;
+          if (!api) throw new Error('MisformatGuardDashboard not loaded');
+          const r = await api.config();
+          const c = r.config || {};
+          this.cfg = Object.assign({}, this.cfg, c, {
+            cascade: Object.assign({}, this.cfg.cascade, c.cascade || {}),
+          });
+          this.ok = true;
+        } catch (e) {
+          this.ok = false; this.msg = 'load failed: ' + e; this.msgIsError = true;
+        }
+        this.busy = false;
+      },
+      async save() {
+        this.busy = true; this.msg = '';
+        try {
+          const api = window.MisformatGuardDashboard;
+          if (!api) throw new Error('MisformatGuardDashboard not loaded');
+          const r = await api.setConfig(this.cfg);
+          if (r.ok) {
+            this.msg = '✓ saved (' + (r.updated || []).join(', ') + ')';
+            this.msgIsError = false;
+          } else {
+            this.msg = '✗ ' + (r.error || 'unknown error');
+            this.msgIsError = true;
+          }
+        } catch (e) {
+          this.msg = '✗ ' + e; this.msgIsError = true;
+        }
+        this.busy = false;
+        setTimeout(() => { this.msg = ''; }, 5000);
+      },
+      async resetCounters() {
+        if (!confirm('Reset all misformat_guard counters to zero?')) return;
+        this.busy = true;
+        try {
+          const api = window.MisformatGuardDashboard;
+          await api.reset();
+          this.msg = '✓ counters reset';
+          this.msgIsError = false;
+        } catch (e) {
+          this.msg = '✗ ' + e; this.msgIsError = true;
+        }
+        this.busy = false;
+        setTimeout(() => { this.msg = ''; }, 5000);
+      },
+    };
+  }
+</script>
