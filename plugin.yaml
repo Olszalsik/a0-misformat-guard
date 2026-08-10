@@ -1,32 +1,10 @@
 name: misformat_guard
 title: Misformat Guard
 description: >
-  Repairs misformatted chat-model responses using a cheap utility-model
-  call, so Agent Zero never stalls and never aborts on a bad JSON tool
-  request.
-
-  Architecture (v0.4.0+, Agent Zero v2.5):
-
-    1. Primary cascade -- @extensible wrap on call_chat_model_turn. After
-       the chat model returns, if the response fails the JSON tool
-       extractor, the utility model is called to repair it. The repaired
-       response is substituted into the LLMResult before the monologue
-       loop ever sees the bad text.
-
-    2. Safety net -- @extensible wrap on process_tools. Catches the rare
-       misformat that slipped past the primary cascade (e.g. utility
-       model returned syntactically valid but semantically broken JSON).
-       Re-invokes process_tools with the repaired text.
-
-    3. Prompt steering -- appends a "Quoting rules" block to the system
-       prompt and rewrites the misformat warning so the LLM self-corrects
-       on the next try.
-
-  The plugin needs NO core patch. It uses Agent Zero v2.5's
-  @extension.extensible + _functions/.../end hooks, which were added
-  in upstream commit bf2046ff ("Expose unified model calls to
-  extensions"). The cascade fires only when the response is actually
-  broken; the happy path is a single cheap parse check (no LLM call).
+  Repairs misformatted chat-model responses (bad JSON tool requests) with
+  a cheap utility-model call so Agent Zero never stalls or aborts on them.
+  No core patch -- pure v2.5 extension hooks. See the README for the full
+  5-layer architecture and configuration.
 version: 0.4.1
 min_framework_version: 2.5.0
 settings_sections:
