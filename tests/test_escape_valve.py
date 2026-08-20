@@ -45,7 +45,13 @@ def test_get_config_returns_dict() -> None:
 
 
 def test_get_config_cascade_block() -> None:
-    cfg = misformat_config.get_config(agent=None)
+    # Assert against the SHIPPED defaults (default_config.yaml), not
+    # get_config(agent=None). In a live install get_config resolves the
+    # per-install config.json (which the user may have customised -- e.g.
+    # a different cascade trigger, or no system_prompt_path), so it is
+    # not a stable target for pinning the shipped defaults. The disk
+    # defaults are what guarantees the plugin does something out-of-box.
+    cfg = misformat_config._load_default_from_disk()
     cascade = cfg.get("cascade")
     assert isinstance(cascade, dict), "cascade block must be a dict"
     # The cascade must default to utility_repair so out-of-the-box the
@@ -69,8 +75,14 @@ def test_get_config_cascade_block() -> None:
 
 def test_get_config_no_escape_valve_keys() -> None:
     """v0.4.0 removed the v0.2.0 escape-valve (threshold, abort_message).
-    The agent never aborts now; the cascade is the recovery path."""
-    cfg = misformat_config.get_config(agent=None)
+    The agent never aborts now; the cascade is the recovery path.
+
+    Assert against the SHIPPED defaults (default_config.yaml), not
+    get_config(agent=None): a live install's config.json may still carry
+    a legacy ``threshold`` key from v0.2.0 (the config layer does not
+    strip unknown keys), which would falsely fail this test even though
+    the shipped defaults are clean. The disk defaults are the contract."""
+    cfg = misformat_config._load_default_from_disk()
     assert "threshold" not in cfg, (
         "v0.4.0 removed the threshold config; the agent never aborts"
     )

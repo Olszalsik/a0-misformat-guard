@@ -80,6 +80,25 @@ def _make_extension(agent: _FakeAgent):
     return cascade_mod.CascadeUtilityRepair(agent=agent)
 
 
+def _result_text(data: dict) -> str:
+    """Read the response text out of data['result'] regardless of shape.
+
+    The cascade hook (_20_repair_via_utility._build_new_result) substitutes
+    an LLMResult object on the repair path (helpers.llm.LLMResult), but
+    leaves the legacy (response, reasoning) tuple untouched on the no-op
+    path. The tests feed a tuple in and must assert on whichever shape
+    comes back, so this mirrors the hook's own _extract_response_text:
+    tuple[0] for the legacy form, .response for the LLMResult form.
+    """
+    result = data.get("result")
+    if result is None:
+        return ""
+    if isinstance(result, tuple) and result:
+        first = result[0]
+        return first if isinstance(first, str) else ""
+    return getattr(result, "response", "") or ""
+
+
 # Two kinds of misformats the cascade must handle:
 #  1. TRUNCATED: the response is cut off mid-string (model hit max_tokens).
 #  2. NO_TOOL: the response parses as JSON but has no `tool` key.
@@ -155,7 +174,7 @@ async def test_happy_path_does_not_call_utility(_patch_config):
     data = {"result": (VALID_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0, "utility model must not be called on the happy path"
-    assert data["result"][0] == VALID_RESPONSE, "result must be unchanged on the happy path"
+    assert _result_text(data) == VALID_RESPONSE, "result must be unchanged on the happy path"
 
 
 @pytest.mark.asyncio
@@ -169,7 +188,7 @@ async def test_misformat_triggers_utility_and_substitutes(_patch_config):
     assert len(agent.utility_calls) == 1, "utility model must be called once on misformat"
     assert "JSON repair specialist" in agent.utility_calls[0][0]
     assert BROKEN_RESPONSE in agent.utility_calls[0][1]
-    assert data["result"][0] == GOOD_REPAIR
+    assert _result_text(data) == GOOD_REPAIR
     assert agent.loop_data.params_temporary["_misformat_guard_cascade_used_in_streak"] == 1
     assert agent.loop_data.params_temporary["_misformat_guard_cascade_used_total"] == 1
 
@@ -182,7 +201,7 @@ async def test_utility_raises_does_not_modify_result(_patch_config):
     ext = _make_extension(agent)
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
-    assert data["result"][0] == BROKEN_RESPONSE, "result must be unchanged when utility raises"
+    assert _result_text(data) == BROKEN_RESPONSE, "result must be unchanged when utility raises"
 
 
 @pytest.mark.asyncio
@@ -193,7 +212,7 @@ async def test_utility_returns_bad_shape_does_not_modify(_patch_config):
     ext = _make_extension(agent)
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
-    assert data["result"][0] == BROKEN_RESPONSE
+    assert _result_text(data) == BROKEN_RESPONSE
 
 
 @pytest.mark.asyncio
@@ -203,7 +222,7 @@ async def test_utility_returns_non_json_does_not_modify(_patch_config):
     ext = _make_extension(agent)
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
-    assert data["result"][0] == BROKEN_RESPONSE
+    assert _result_text(data) == BROKEN_RESPONSE
 
 
 @pytest.mark.asyncio
@@ -215,7 +234,7 @@ async def test_streak_below_trigger_does_not_call(_patch_config):
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0, "trigger gate must block the cascade"
-    assert data["result"][0] == BROKEN_RESPONSE
+    assert _result_text(data) == BROKEN_RESPONSE
 
 
 @pytest.mark.asyncio
@@ -228,7 +247,7 @@ async def test_per_streak_cap_stops_cascade(_patch_config):
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0, "per-streak cap must block the cascade"
-    assert data["result"][0] == BROKEN_RESPONSE
+    assert _result_text(data) == BROKEN_RESPONSE
 
 
 @pytest.mark.asyncio
@@ -250,7 +269,7 @@ async def test_mode_off_short_circuits(_patch_config):
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0
-    assert data["result"][0] == BROKEN_RESPONSE
+    assert _result_text(data) == BROKEN_RESPONSE
 
 
 @pytest.mark.asyncio
@@ -262,7 +281,7 @@ async def test_utility_strips_code_fences(_patch_config):
     ext = _make_extension(agent)
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
-    assert data["result"][0] == GOOD_REPAIR, "code fences must be stripped before substitution"
+    assert _result_text(data) == GOOD_REPAIR, "code fences must be stripped before substitution"
 
 
 @pytest.mark.asyncio
@@ -279,7 +298,7 @@ async def test_only_utility_model_used_never_chat(_patch_config):
     ext = _make_extension(agent)
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
-    assert data["result"][0] == GOOD_REPAIR
+    assert _result_text(data) == GOOD_REPAIR
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +361,7 @@ async def test_user_docker_log_scenario(_patch_config):
     assert DOCKER_LOG_BROKEN in agent.utility_calls[0][1], (
         "the broken response must be passed to the utility model for repair"
     )
-    assert data["result"][0] == DOCKER_LOG_REPAIRED, (
+    assert _result_text(data) == DOCKER_LOG_REPAIRED, (
         "the repaired response must be substituted into data['result']"
     )
 
@@ -364,7 +383,7 @@ async def test_never_stalls_on_utility_timeout(_patch_config):
     ext = _make_extension(agent)
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)  # must return without raising
-    assert data["result"][0] == BROKEN_RESPONSE, (
+    assert _result_text(data) == BROKEN_RESPONSE, (
         "on utility timeout, the broken response must be passed through "
         "unchanged so the framework's misformat warning can fire and the "
         "LLM can retry -- this is what 'never stall' means"
@@ -383,7 +402,7 @@ async def test_primary_disabled_short_circuits(_patch_config):
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0
-    assert data["result"][0] == BROKEN_RESPONSE
+    assert _result_text(data) == BROKEN_RESPONSE
 
 
 @pytest.mark.asyncio
@@ -436,7 +455,7 @@ async def test_stale_api_module_missing_is_misformat(_patch_config, monkeypatch)
         "with a local is_misformat fallback, the cascade must still "
         "call the utility model on misformat"
     )
-    assert data["result"][0] == GOOD_REPAIR
+    assert _result_text(data) == GOOD_REPAIR
 
 
 @pytest.mark.asyncio
@@ -453,7 +472,7 @@ async def test_stale_api_module_missing_repair_function(_patch_config, monkeypat
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     # Must not raise
     await ext.execute(data=data)
-    assert data["result"][0] == BROKEN_RESPONSE, (
+    assert _result_text(data) == BROKEN_RESPONSE, (
         "with no try_repair_via_utility, the cascade must leave the "
         "original response untouched"
     )

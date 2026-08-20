@@ -57,6 +57,11 @@ def _make_agent(enabled: bool = True, reset_on_warning: bool = True,
     prompts = {
         "fw.msg_misformat.md": MISFORMAT_TEXT,
         "fw.msg_repeat.md": REPEAT_TEXT,
+        # The upstream stop path reads this (with limit=) when the
+        # counter hits the ceiling. Must be present so read_prompt does
+        # not KeyError in the end-to-end "hook disabled -> upstream
+        # raises" test.
+        "fw.msg_unusable_response_limit.md": "stop: too many unusable responses",
     }
 
     def read_prompt(name, **kwargs):
@@ -72,6 +77,11 @@ def _make_agent(enabled: bool = True, reset_on_warning: bool = True,
         loop_data=loop_data,
         read_prompt=read_prompt,
         _cfg=cfg,
+        # The upstream stop path (_90_stop_unusable_response_loop.py:54)
+        # calls self.agent.context.log.log(type=, content=) right before
+        # it sets data["exception"]. Give it a no-op log so the
+        # disabled-hook end-to-end test can reach the exception set.
+        context=SimpleNamespace(log=SimpleNamespace(log=lambda **kw: None)),
     )
     return agent
 
@@ -228,7 +238,14 @@ def test_upstream_does_not_raise_when_consume_hook_active(monkeypatch):
     # A fresh agent, fresh state.
     agent = _make_agent(enabled=True, state={}, iteration=0)
 
-    # Misformat 1: consume hook resets to {count: 0}; upstream reads 0, +1 = 1, OK.
+    # Misformat 1: the consume hook writes {iteration: 0, count: 0} to
+    # params_persistent. The upstream then runs on the SAME extension-
+    # point invocation (same iteration=0), sees previous_iteration == iteration,
+    # and hits its same-iteration guard (_90_stop_unusable_response_loop.py
+    # line 38-39) -> returns early WITHOUT incrementing. So the counter
+    # stays at 0 (not 1) and no exception is set. The outcome the user
+    # cares about -- "do not raise" -- holds; the counter is simply held
+    # at 0 rather than nudged to 1.
     agent.loop_data.iteration = 0
     data = _run_hook(agent, MISFORMAT_TEXT, data={
         "args": (agent, MISFORMAT_TEXT),
@@ -240,9 +257,11 @@ def test_upstream_does_not_raise_when_consume_hook_active(monkeypatch):
     # in production: _10 hook -> _90 hook).
     upstream_mod.StopUnusableResponseLoop(agent=agent).execute(data=data)
     assert data["exception"] is None, "upstream should not raise on first misformat"
-    assert agent.loop_data.params_persistent["_unusable_response_failures"] == {"iteration": 0, "count": 1}
+    assert agent.loop_data.params_persistent["_unusable_response_failures"] == {"iteration": 0, "count": 0}
 
-    # Misformat 2: consume hook resets to {count: 0} again; upstream reads 0, +1 = 1, OK.
+    # Misformat 2 (next iteration): same story -- consume hook writes
+    # {iteration: 1, count: 0}, upstream same-iteration guard returns
+    # early, counter stays 0, no raise.
     agent.loop_data.iteration = 1
     data = _run_hook(agent, MISFORMAT_TEXT, data={
         "args": (agent, MISFORMAT_TEXT),
@@ -252,7 +271,7 @@ def test_upstream_does_not_raise_when_consume_hook_active(monkeypatch):
     })
     upstream_mod.StopUnusableResponseLoop(agent=agent).execute(data=data)
     assert data["exception"] is None, "upstream must not raise on second misformat when consume hook is active"
-    assert agent.loop_data.params_persistent["_unusable_response_failures"] == {"iteration": 1, "count": 1}
+    assert agent.loop_data.params_persistent["_unusable_response_failures"] == {"iteration": 1, "count": 0}
 
     # Misformat 3: same, still OK. The user can keep going.
     agent.loop_data.iteration = 2
@@ -284,7 +303,9 @@ def test_upstream_still_raises_when_consume_hook_disabled(monkeypatch):
 
     agent = _make_agent(enabled=True, reset_on_warning=False, state={}, iteration=0)
 
-    # Misformat 1: consume hook is a no-op. Upstream reads count=0, +1 = 1, OK.
+    # Misformat 1: consume hook is a no-op (reset flag off). Upstream
+    # has no prior state -> count=1 (the else branch, since
+    # previous_iteration None != iteration-1). 1 < limit(2) -> no raise.
     agent.loop_data.iteration = 0
     data = _run_hook(agent, MISFORMAT_TEXT, data={
         "args": (agent, MISFORMAT_TEXT),
@@ -294,8 +315,15 @@ def test_upstream_still_raises_when_consume_hook_disabled(monkeypatch):
     })
     upstream_mod.StopUnusableResponseLoop(agent=agent).execute(data=data)
     assert data["exception"] is None
+    assert agent.loop_data.params_persistent["_unusable_response_failures"] == {"iteration": 0, "count": 1}
 
-    # Misformat 2: still OK (1 < 2).
+    # Misformat 2 (next iteration): consume hook still a no-op. Upstream
+    # sees previous_iteration(0) == iteration-1(0) -> consecutive, so
+    # count = 1 + 1 = 2. count(2) >= limit(2) -> upstream reads
+    # fw.msg_unusable_response_limit.md (now in the mock prompts) and
+    # raises HandledException. This is exactly the contract the consume
+    # hook exists to prevent -- and here it is NOT preventing it because
+    # we turned the hook off.
     agent.loop_data.iteration = 1
     data = _run_hook(agent, MISFORMAT_TEXT, data={
         "args": (agent, MISFORMAT_TEXT),
@@ -304,17 +332,9 @@ def test_upstream_still_raises_when_consume_hook_disabled(monkeypatch):
         "exception": None,
     })
     upstream_mod.StopUnusableResponseLoop(agent=agent).execute(data=data)
-    assert data["exception"] is None
-
-    # Misformat 3: upstream reads count=2, sees count >= limit, raises.
-    # (Existing upstream test asserts this behavior; we verify the
-    # consume hook is NOT what stopped it.)
-    agent.loop_data.iteration = 2
-    data = _run_hook(agent, MISFORMAT_TEXT, data={
-        "args": (agent, MISFORMAT_TEXT),
-        "kwargs": {"id": ""},
-        "result": None,
-        "exception": None,
-    })
-    upstream_mod.StopUnusableResponseLoop(agent=agent).execute(data=data)
-    assert isinstance(data["exception"], HandledException)
+    assert isinstance(data["exception"], HandledException), (
+        "with the consume hook disabled, the upstream must still raise "
+        "at its configured limit (2 consecutive misformats) -- this "
+        "proves the consume hook is what suppresses the raise in the "
+        "active test, not a change to the upstream itself"
+    )
