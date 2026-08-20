@@ -118,13 +118,13 @@ def test_utility_repair_prompt_exists():
     assert "tool_args" in content
 
 
-def test_plugin_yaml_bumped_to_v040():
+def test_plugin_yaml_bumped_to_v050():
     import yaml
     p = REPO_ROOT / "usr" / "plugins" / "misformat_guard" / "plugin.yaml"
     with p.open(encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    assert data.get("version") == "0.4.0", (
-        f"plugin version is {data.get('version')!r}, expected '0.4.0'"
+    assert data.get("version") == "0.5.0", (
+        f"plugin version is {data.get('version')!r}, expected '0.5.0'"
     )
     assert data.get("min_framework_version") == "2.5.0", (
         f"min_framework_version is {data.get('min_framework_version')!r}, "

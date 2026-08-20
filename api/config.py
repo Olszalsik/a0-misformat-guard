@@ -10,7 +10,9 @@ Config keys accepted (all optional; omitted keys are not changed):
   enabled, threshold, repair_enabled, repair_only_on_misformat,
   quote_rules_enabled, clarify_misformat_warning, stats_enabled,
   cascade.mode, cascade.trigger, cascade.max_per_streak,
-  cascade.max_total_per_chat, cascade.timeout_s, cascade.system_prompt
+  cascade.max_total_per_chat, cascade.timeout_s, cascade.system_prompt,
+  tool_repeat_guard_enabled, tool_repeat_warn_threshold,
+  tool_repeat_stop_threshold, tool_repeat_action, tool_repeat_normalize_args
 """
 
 from datetime import datetime, timezone
@@ -30,7 +32,19 @@ _SCALAR_KEYS = (
     "quote_rules_enabled",
     "clarify_misformat_warning",
     "stats_enabled",
+    # Layer 5 (v0.5.0) tool-repeat guard. The list-valued keys
+    # (tool_repeat_error_patterns, tool_repeat_ignored_tools) stay
+    # advanced-only -- not UI-persisted here (documented in
+    # default_config.yaml).
+    "tool_repeat_guard_enabled",
+    "tool_repeat_warn_threshold",
+    "tool_repeat_stop_threshold",
+    "tool_repeat_action",
+    "tool_repeat_normalize_args",
 )
+
+# Valid actions for the tool-repeat guard.
+_REPEAT_ACTIONS = ("warn", "stop", "warn_then_stop")
 
 
 def _coerce(key, value):
@@ -40,6 +54,14 @@ def _coerce(key, value):
     if key == "threshold":
         n = int(value)
         return max(1, min(10, n))
+    if key in ("tool_repeat_warn_threshold", "tool_repeat_stop_threshold"):
+        # 0 disables that half of the guard -- respect it (do NOT clamp to 1).
+        n = int(value)
+        return max(0, min(20, n))
+    if key == "tool_repeat_action":
+        if value not in _REPEAT_ACTIONS:
+            return "warn_then_stop"
+        return value
     return value
 
 

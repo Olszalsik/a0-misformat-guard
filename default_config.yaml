@@ -142,3 +142,65 @@ consecutive_unusable_floor: 5
 # setting alone (only the new hook is active). Useful for users who
 # want to manage the setting themselves from the WebUI.
 install_overrides_consecutive_floor: true
+
+# ---------------------------------------------------------------------------
+# Layer 5 - Tool-repeat guard (v0.5.0)
+# ---------------------------------------------------------------------------
+# A tool_execute_after hook that detects the "reasoning death-loop" the
+# framework's own breakers do NOT catch: the agent re-emits the SAME tool
+# call with the SAME arguments and gets an error result each time (e.g.
+# a code_editor patch with a stale old_text -> "error patching <path>:
+# old_text not found"), then re-emits it dozens of times, burning tokens.
+# The framework's misformat/repeat breakers only fire on warnings, which
+# a well-formed-but-failing tool call never produces; the tool error is a
+# normal tool result fed back to the model, so the loop runs forever.
+#
+# The guard tracks a per-context streak of identical (tool, args) error
+# results in loop_data.params_persistent (NOT params_temporary -- agent.py
+# wipes params_temporary every iteration). At warn_threshold it injects a
+# corrective system_warning + tags the tool result inline; at
+# stop_threshold it ends the turn cleanly via break_loop so a truly stuck
+# model cannot burn tokens forever. See AGENTS.md for the full rationale.
+tool_repeat_guard_enabled: true
+
+# Consecutive identical failing calls at which the soft warning fires.
+# 0 disables the warning half. Default 2 = warn early.
+tool_repeat_warn_threshold: 2
+
+# Consecutive identical failing calls at which the turn is hard-stopped
+# (break_loop). 0 disables the hard stop (the agent may loop forever if
+# it ignores warnings -- only use 0 with action "warn"). Default 4.
+tool_repeat_stop_threshold: 4
+
+# What to do when the threshold is hit:
+#   warn           -> only inject the corrective warning, never stop
+#   stop           -> hard-stop at stop_threshold, no soft warning phase
+#   warn_then_stop -> warn at warn_threshold, then hard-stop at
+#                     stop_threshold (RECOMMENDED)
+tool_repeat_action: "warn_then_stop"
+
+# Regexes (case-insensitive) that classify a tool result message as an
+# ERROR. The framework's tool Response has no .error/.status field, so
+# error detection is by message text -- the text_editor family emits
+# "error <action> <path>: <error>". Add your own patterns for tools that
+# format errors differently. A non-matching result resets the streak
+# (treated as progress).
+tool_repeat_error_patterns:
+  - "^error\\b"
+  - "^error:"
+  - "old_text not found"
+  - "traceback"
+  - "^failed\\b"
+
+# Tools never tracked (the streak is not accumulated for them). The
+# final-answer tool ends the loop on success and is not a "stuck repeat"
+# candidate. Both the short and long Agent Zero names are listed.
+tool_repeat_ignored_tools:
+  - "response"
+  - "response_tool"
+
+# When true, strip whitespace in string args before computing the
+# signature, so trivial whitespace variants collapse to one streak.
+# Off by default (strict) -- the byte-identical death-loop needs no
+# normalization, and over-normalizing risks false positives.
+tool_repeat_normalize_args: false

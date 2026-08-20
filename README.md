@@ -4,7 +4,10 @@ A plugin that prevents Agent Zero from looping indefinitely on
 "misformatted message" warnings, and reduces how often those warnings
 happen in the first place. v0.4.1 coordinates with the framework's
 upstream cost circuit breaker so the agent is never stopped by a
-misformat the cascade has already seen.
+misformat the cascade has already seen. v0.5.0 adds a tool-repeat guard
+(Layer 5) that breaks the "reasoning death-loop" where the agent re-emits
+the *same* failing tool call dozens of times -- the one loop none of the
+framework's existing breakers catch.
 
 The plugin lives in `usr/plugins/misformat_guard/` and is fully
 isolated from the core Agent Zero code. It can be installed, enabled,
@@ -22,6 +25,7 @@ Five layers, each addressing a different part of the misformat problem:
 | 3b | Quoting rules appended to the system prompt | `extensions/python/system_prompt/_10_quote_rules.py` + `prompts/quote_rules.md` | Tells the LLM to avoid unescaped `"` in string values (the dominant misformat cause). |
 | 3c | Misformat warning rewritten to name the common cause | `extensions/python/hist_add_before/_10_clarify_misformat.py` | Appends a one-liner to the framework's `fw.msg_misformat.md` warning so the LLM self-corrects on the next try. |
 | 4 | Upstream cost-circuit-breaker coordination (v0.4.1) | `extensions/python/_functions/agent/Agent/hist_add_warning/end/_10_misformat_consume_warning.py` | Sits at the same extension point as the framework's `_90_stop_unusable_response_loop` and runs before it. Resets the upstream's `max_consecutive_unusable_responses` counter on every misformat warning so the agent is never stopped by a streak the cascade has seen. |
+| 5 | Tool-repeat guard (v0.5.0) | `extensions/python/tool_execute_after/_30_detect_repeat_failures.py` | A `tool_execute_after` hook that detects the agent re-emitting the *same* tool call with the *same* args and getting an error each time (e.g. a `code_editor` patch with a stale `old_text`). The framework's misformat/repeat breakers miss this: it's a well-formed tool call (no misformat warning), each iteration's response differs (the error is appended to history, so no byte-identical repeat), and the tool error is a normal result, not a warning. The guard tracks a per-context streak in `loop_data.params_persistent` (not `params_temporary`, which is wiped every iteration), warns at `tool_repeat_warn_threshold` (system_warning + inline tag) and hard-stops the turn at `tool_repeat_stop_threshold` (`break_loop`). |
 
 The default behaviour:
 
@@ -41,6 +45,14 @@ The default behaviour:
 - The misformat warning that lands in history is augmented with a
   one-liner naming the common cause so the model self-corrects on
   the next try.
+- The tool-repeat guard (v0.5.0) watches every `tool_execute_after`. When
+  the *same* tool + *same* args returns an error N times in a row, it
+  warns the model at `warn_threshold` (default 2: a `system_warning` in
+  history + a directive prepended to the tool result) and hard-stops the
+  turn at `stop_threshold` (default 4: `break_loop` with a stop
+  message). A non-error result, or a different (tool, args), resets the
+  streak -- progress is never penalized. The final-answer tool
+  (`response`) is never tracked.
 
 ## Installation
 
@@ -78,6 +90,14 @@ clarify_misformat_warning: true        # Layer 3c
 reset_unusable_loop_on_warning: true   # v0.4.1 Layer 4
 consecutive_unusable_floor: 5          # v0.4.1 install() sets this on the framework
 install_overrides_consecutive_floor: true  # v0.4.1 set false to leave framework alone
+# Layer 5 (v0.5.0) tool-repeat guard
+tool_repeat_guard_enabled: true
+tool_repeat_warn_threshold: 2          # consecutive identical fails -> warn
+tool_repeat_stop_threshold: 4          # consecutive identical fails -> stop
+tool_repeat_action: warn_then_stop     # warn | stop | warn_then_stop
+tool_repeat_normalize_args: false      # true: strip whitespace before sig
+# tool_repeat_error_patterns / tool_repeat_ignored_tools: see
+# default_config.yaml (advanced; not UI-persisted).
 cascade:
   mode: utility_repair
   trigger: 1                           # fire on first misformat
@@ -99,11 +119,11 @@ via the chat) can call to inspect what's happening. Actions:
 ## WebUI
 
 `webui/config.html` and `webui/dashboard-store.js` provide a live
-dashboard with counter tiles, the configuration form (5 layers, v0.4.1
-adds Layer 5 for the circuit-breaker coordination), and a 5-second
-polling loop that pauses when the tab is hidden. v0.3.0 disabled
-polling to avoid a UI freeze; v0.4.1 re-enables it with a visibility
-guard so the freeze does not return.
+dashboard with counter tiles, the configuration form (5 layers: Layer 4
+is the v0.4.1 circuit-breaker coordination; Layer 5 is the v0.5.0
+tool-repeat guard), and a 5-second polling loop that pauses when the
+tab is hidden. v0.3.0 disabled polling to avoid a UI freeze; v0.4.1
+re-enables it with a visibility guard so the freeze does not return.
 
 ## Testing
 

@@ -1,5 +1,5 @@
 <!--
-  misformat_guard WebUI configuration panel (v0.4.1).
+  misformat_guard WebUI configuration panel (v0.5.0).
 
   All settings are editable from the UI; nothing requires editing
   default_config.yaml by hand. Changes are persisted to the framework
@@ -158,10 +158,10 @@
   </div>
 
   <!-- ============================================================ -->
-  <!-- LAYER 5 - UPSTREAM CIRCUIT-BREAKER COORDINATION (v0.4.1) -->
+  <!-- LAYER 4 - UPSTREAM CIRCUIT-BREAKER COORDINATION (v0.4.1) -->
   <!-- ============================================================ -->
   <div class="settings-section" style="background: rgba(120,80,40,0.10); padding: 12px; border-radius: 6px; border: 1px solid rgba(200,160,80,0.25);">
-    <h4 style="margin: 0 0 6px 0;">Layer 5 — Upstream circuit-breaker coordination</h4>
+    <h4 style="margin: 0 0 6px 0;">Layer 4 — Upstream circuit-breaker coordination (v0.4.1)</h4>
     <small style="opacity: 0.7;">
       Agent Zero's framework has its own cost circuit breaker that stops the
       agent after 2 consecutive <em>fw.msg_misformat.md</em> warnings. v0.4.1
@@ -193,6 +193,67 @@
         <small style="opacity: 0.7;">When ON, install() bumps the setting and uninstall() restores it.</small>
       </div>
     </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- LAYER 5 - TOOL-REPEAT GUARD (v0.5.0) -->
+  <!-- ============================================================ -->
+  <div class="settings-section" style="background: rgba(80,40,120,0.10); padding: 12px; border-radius: 6px; border: 1px solid rgba(160,80,200,0.25);">
+    <h4 style="margin: 0 0 6px 0;">Layer 5 — Tool-repeat guard (v0.5.0)</h4>
+    <small style="opacity: 0.7;">
+      Breaks the "reasoning death-loop" the framework's own breakers miss: the
+      agent re-emits the <em>same</em> tool call with the <em>same</em> args and
+      gets an error each time (e.g. a <code>code_editor</code> patch with a stale
+      <code>old_text</code>). The misformat/repeat breakers miss it because the
+      call is well-formed (no misformat warning) and each error is appended to
+      history (no byte-identical repeat). This guard tracks a per-context streak
+      and warns, then hard-stops the turn.
+    </small>
+    <label style="display: block; margin-top: 6px;">
+      <input type="checkbox" x-model="cfg.tool_repeat_guard_enabled" />
+      <strong>Enable the tool-repeat guard</strong>
+    </label>
+    <small style="opacity: 0.7;">
+      When OFF, the hook is a no-op and the agent may loop on a failing call
+      indefinitely. When ON, the thresholds below take effect.
+    </small>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-top: 8px;">
+      <div>
+        <label>Warn threshold</label>
+        <input type="number" min="0" max="20" step="1" x-model.number="cfg.tool_repeat_warn_threshold" style="width: 5em;" />
+        <small>Consecutive identical fails before the soft warning. 0 = never warn.</small>
+      </div>
+      <div>
+        <label>Stop threshold</label>
+        <input type="number" min="0" max="20" step="1" x-model.number="cfg.tool_repeat_stop_threshold" style="width: 5em;" />
+        <small>Consecutive identical fails before the turn is hard-stopped. 0 = never stop.</small>
+      </div>
+    </div>
+
+    <div style="margin-top: 8px;">
+      <label>Action</label>
+      <select x-model="cfg.tool_repeat_action" style="min-width: 14em;">
+        <option value="warn_then_stop">warn_then_stop (warn, then hard-stop — recommended)</option>
+        <option value="warn">warn (warn only, never stop)</option>
+        <option value="stop">stop (hard-stop only, no soft warning)</option>
+      </select>
+    </div>
+
+    <label style="display: block; margin-top: 8px;">
+      <input type="checkbox" x-model="cfg.tool_repeat_normalize_args" />
+      <strong>Normalize args (strip whitespace) before signature</strong>
+    </label>
+    <small style="opacity: 0.7;">
+      When ON, trivial whitespace variants of the same args collapse to one
+      streak. Off by default (strict) — the byte-identical death-loop needs no
+      normalization, and over-normalizing risks false positives.
+    </small>
+    <small style="display: block; margin-top: 6px; opacity: 0.6;">
+      Advanced keys (<code>tool_repeat_error_patterns</code>,
+      <code>tool_repeat_ignored_tools</code>) are not UI-persisted — edit
+      <code>default_config.yaml</code> or the framework plugin config directly.
+    </small>
   </div>
 
   <!-- ============================================================ -->
@@ -267,6 +328,12 @@
         consecutive_unusable_floor: 5,
         install_overrides_consecutive_floor: true,
         cascade: { mode: 'utility_repair', trigger: 1, max_per_streak: 2, max_total_per_chat: 6, timeout_s: 30 },
+        // Layer 5 (v0.5.0) tool-repeat guard
+        tool_repeat_guard_enabled: true,
+        tool_repeat_warn_threshold: 2,
+        tool_repeat_stop_threshold: 4,
+        tool_repeat_action: 'warn_then_stop',
+        tool_repeat_normalize_args: false,
       },
       async init() {
         await this.refresh();

@@ -3,6 +3,18 @@ from usr.plugins.misformat_guard.api import misformat_config, misformat_stats
 from usr.plugins.misformat_guard.api import __version__ as PLUGIN_VERSION
 
 
+def _int_or(cfg, key, default):
+    """Read an int config value respecting 0 (the `or` fallback would
+    coerce 0 -> default, which misreports a threshold the user disabled)."""
+    v = cfg.get(key, default)
+    if v is None or v == "":
+        return default
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+
 class Health(ApiHandler):
     async def process(self, input_data, request):
         try:
@@ -21,6 +33,12 @@ class Health(ApiHandler):
                 'consecutive_unusable_floor': int(
                     cfg.get('consecutive_unusable_floor', 5) or 5
                 ),
+                'tool_repeat_guard_enabled': bool(
+                    cfg.get('tool_repeat_guard_enabled', True)
+                ),
+                'tool_repeat_warn_threshold': _int_or(cfg, 'tool_repeat_warn_threshold', 2),
+                'tool_repeat_stop_threshold': _int_or(cfg, 'tool_repeat_stop_threshold', 4),
+                'tool_repeat_action': cfg.get('tool_repeat_action', 'warn_then_stop'),
                 'cascade': {
                     'mode': cascade.get('mode', 'off'),
                     'trigger': int(cascade.get('trigger', 1) or 1),

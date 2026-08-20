@@ -11,4 +11,4 @@ Endpoints exposed by this plugin (under /api/plugins/misformat_guard/*):
 # hooks.PLUGIN_VERSION. The /health endpoint surfaces this so the
 # dashboard and tests can pin the running version without parsing
 # the manifest.
-__version__ = "0.4.1"
+__version__ = "0.5.0"
