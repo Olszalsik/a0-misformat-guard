@@ -128,7 +128,7 @@ class Config(ApiHandler):
         # read returns the freshly-persisted values (helpers.plugins
         # caches get_plugin_config across requests).
         try:
-            plugins_helper.clear_plugin_cache([PLUGIN_NAME], python_change=False)
+            plugins_helper.clear_plugin_cache([PLUGIN_NAME])
         except Exception:
             pass
         try:

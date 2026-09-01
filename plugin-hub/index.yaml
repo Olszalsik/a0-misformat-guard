@@ -1,0 +1,38 @@
+# Plugin Hub submission manifest (agent0ai/a0-plugins).
+#
+# This file is NOT read by the agent-zero runtime (the runtime reads
+# plugin.yaml). It is the index entry for the community Plugin Hub. To
+# publish, copy this file (and the optional thumbnail.png) to:
+#   plugins/misformat_guard/
+# in a fork of https://github.com/agent0ai/a0-plugins, then open a PR
+# titled "feat: add misformat_guard".
+# A square source thumbnail already exists at webui/thumbnail.png
+# -- copy it into the folder as thumbnail.png.
+#
+# Pre-req: the GitHub repo below MUST be public (the Hub fetches the
+# README from raw.githubusercontent.com and the installer clones a
+# public git URL). Make it public before opening the contribution PR.
+#
+# CI rules (see skills/a0-contribute-plugin/SKILL.md):
+#   - title max 50 chars, description max 500 chars, tags max 5
+#   - folder name ^[a-z0-9_]+$ -> misformat_guard
+#   - remote plugin.yaml `name` must equal this folder name (it does:
+#     `name: misformat_guard`)
+#   - github URL must be unique in the index and point to an existing
+#     public repo
+#   - remote repo root must contain LICENSE (it does: MIT)
+
+title: Misformat Guard
+description: >-
+  Repairs misformatted chat-model responses (broken JSON tool requests)
+  with a cheap utility-model call so Agent Zero never stalls or aborts on
+  them. Five defensive layers including a tool-repeat guard that breaks
+  the reasoning death-loop where the agent re-emits the same failing tool
+  call dozens of times. No core patch — pure extension hooks, with a live
+  WebUI dashboard and per-agent configuration.
+github: https://github.com/Olszalsik/a0-misformat-guard
+tags:
+  - llm
+  - tools
+  - prompting
+  - agents

@@ -21,13 +21,22 @@ LLM will retry -- but we can do better. This hook:
 
   1. Detects data['result'] is None AND data['exception'] is None (the
      misformat path, not an exception path).
-  2. Reads the buffered stream text from params_temporary (placed there
-     by response_stream_chunk/_10_buffer_stream.py).
-  3. Calls the utility model to repair it. If the repair is parseable,
-     re-invokes the framework's process_tools with the repaired text.
+  2. Checks the ACTUAL message the framework passed to process_tools
+     (v0.5.1: not the stream buffer -- the buffer is a truncated prefix
+     whenever extraction succeeded mid-stream, which would misfire on
+     every ordinary successful tool call). If the message parses as a
+     tool request, this was a normal dispatch and we return.
+  3. Calls the utility model to repair the unparseable message. If the
+     repair is parseable, re-invokes the framework's process_tools with
+     the repaired text.
   4. Sets data['result'] to the result of the re-invocation, masking
      the original None. The monologue loop sees a successful tool
      dispatch and continues.
+
+The re-invocation goes through the @extensible wrapper, so this /end
+hook runs again for it; a REENTRY_KEY flag in params_temporary bounds
+it to a single level, and the cascade budget counters are incremented
+before the utility call so failed attempts are bounded too.
 
 Like the primary cascade, this NEVER stalls. If the utility model
 fails, the original None propagates and the framework's existing
@@ -51,6 +60,7 @@ from usr.plugins.misformat_guard.api import (
 STREAM_KEY = "_misformat_guard_stream_full"
 USED_STREAK_KEY = "_misformat_guard_cascade_used_in_streak"
 USED_TOTAL_KEY = "_misformat_guard_cascade_used_total"
+REENTRY_KEY = "_misformat_guard_fallback_active"
 
 
 def _print(msg: str) -> None:
@@ -89,9 +99,27 @@ class ProcessToolsFallback(Extension):
 
         loop_data = getattr(self.agent, "loop_data", None)
         params = _get_params(loop_data)
+
+        # v0.5.1 fix: decide from the ACTUAL message the framework passed
+        # to process_tools, not from the stream buffer. The buffer is a
+        # stale prefix whenever the tool extractor succeeded mid-stream
+        # (the framework early-returns before the chunk hook runs on the
+        # final chunk), so buffer-based checks misfire on every ordinary
+        # successful tool call and would re-execute the tool.
+        call_args = data.get("args")
+        msg = (
+            call_args[0]
+            if isinstance(call_args, tuple) and call_args
+            and isinstance(call_args[0], str)
+            else None
+        )
+
+        # Buffered stream text (response_stream_chunk/_10_buffer_stream.py).
+        # Only used as the repair input when the call args are unusable.
         stream_text = params.get(STREAM_KEY)
         if not isinstance(stream_text, str) or not stream_text:
-            return
+            if not isinstance(msg, str) or not msg:
+                return
 
         # Defensive: a stale .pyc or partial reload could mean
         # is_misformat is missing. Use a local fallback in that case
@@ -113,11 +141,19 @@ class ProcessToolsFallback(Extension):
             except Exception:  # noqa: BLE001
                 return  # can't determine; let the framework handle it
 
-        if not is_misformat(stream_text):
-            # Defensive: if the stream is actually parseable, the
-            # misformat-else-branch wasn't reached for the reason we
-            # think. Don't try to repair what isn't broken.
+        # The real misformat signal is the message the framework itself
+        # could not parse. If that message parses as a tool request, this
+        # was an ordinary successful dispatch (process_tools returns None
+        # whenever the executed tool does not break the loop) -- there is
+        # nothing to repair, and re-invoking would run the tool twice.
+        if isinstance(msg, str) and not is_misformat(msg):
             return
+
+        # Repair input: prefer the actual full message. The stream buffer
+        # is a truncated mid-stream prefix (the framework stops calling
+        # the chunk hook once extraction succeeds), so it is only a
+        # fallback if the args shape ever changes.
+        repair_text = msg if isinstance(msg, str) and msg else stream_text
 
         misformat_stats.record_cascade_attempt(self.agent)
 
@@ -139,6 +175,17 @@ class ProcessToolsFallback(Extension):
                     + str(max_total)
                 )
             return
+        # v0.5.1 fix: count the attempt BEFORE the utility call, not only
+        # on success -- otherwise failed attempts never consume budget.
+        params[USED_STREAK_KEY] = used_streak + 1
+        params[USED_TOTAL_KEY] = used_total + 1
+
+        # Re-entry guard: the re-invocation below goes through the same
+        # @extensible wrapper, so this /end hook runs again for it. On a
+        # nested pass, bail out immediately (its own msg will parse and
+        # return early above; this guard covers any residual path).
+        if params.get(REENTRY_KEY):
+            return
 
         # Call the utility model. Never raises. If the api module is
         # stale, fall back to no-op so the original None stands.
@@ -148,19 +195,20 @@ class ProcessToolsFallback(Extension):
         if try_repair_via_utility is None:
             misformat_stats.record_cascade_failure(self.agent)
             return
-        repaired, ok = await try_repair_via_utility(self.agent, stream_text)
+        repaired, ok = await try_repair_via_utility(self.agent, repair_text)
         if not ok or repaired is None:
             misformat_stats.record_cascade_failure(self.agent)
             if cfg.get("verbose", False):
                 _print("fallback utility model did not produce a parseable repair")
             return
 
-        # Re-invoke process_tools with the repaired text. This is a
-        # recursive call into the wrapped function; the cascade is
-        # rate-limited so a re-entry here is bounded.
+        # Re-invoke process_tools with the repaired text. This re-enters
+        # the @extensible wrapper (and this hook); the REENTRY_KEY above
+        # bounds it to a single level.
         process_tools = getattr(self.agent, "process_tools", None)
         if process_tools is None:
             return
+        params[REENTRY_KEY] = True
         try:
             new_result = await process_tools(repaired)
         except Exception as exc:  # noqa: BLE001 - never make it worse
@@ -168,6 +216,8 @@ class ProcessToolsFallback(Extension):
             if cfg.get("verbose", False):
                 _print("fallback re-invocation raised: " + repr(exc))
             return
+        finally:
+            params[REENTRY_KEY] = False
 
         if new_result is None:
             # Repaired text still failed. Let the original None stand
@@ -179,8 +229,6 @@ class ProcessToolsFallback(Extension):
             return
 
         data["result"] = new_result
-        params[USED_STREAK_KEY] = used_streak + 1
-        params[USED_TOTAL_KEY] = used_total + 1
         misformat_stats.record_cascade_repair(self.agent)
         if cfg.get("verbose", False):
             _print("fallback repair succeeded, re-invocation returned non-None")

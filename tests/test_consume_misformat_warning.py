@@ -28,10 +28,13 @@ from types import SimpleNamespace
 import pytest
 
 
-REPO_ROOT = Path("/a0")
-_override = os.environ.get("REPO_ROOT_OVERRIDE")
-if _override:
-    REPO_ROOT = Path(_override)
+# Repo/install root: derived from this file's location
+# (<root>/usr/plugins/misformat_guard/tests/ -> 4 levels up), which works
+# both inside the container (/a0) and on the host. REPO_ROOT_OVERRIDE
+# still wins for non-standard layouts.
+REPO_ROOT = Path(
+    os.environ.get("REPO_ROOT_OVERRIDE") or Path(__file__).resolve().parents[4]
+)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -57,6 +60,9 @@ def _make_agent(enabled: bool = True, reset_on_warning: bool = True,
     prompts = {
         "fw.msg_misformat.md": MISFORMAT_TEXT,
         "fw.msg_repeat.md": REPEAT_TEXT,
+        # Upstream (v2.10+) treats the empty-response warning as a third
+        # unusable marker and reads it whenever it classifies a warning.
+        "fw.msg_empty_response.md": "your response was empty",
         # The upstream stop path reads this (with limit=) when the
         # counter hits the ceiling. Must be present so read_prompt does
         # not KeyError in the end-to-end "hook disabled -> upstream

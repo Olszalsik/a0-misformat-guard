@@ -22,10 +22,13 @@ from pathlib import Path
 import pytest
 
 
-REPO_ROOT = Path("/a0")
-_override = os.environ.get("REPO_ROOT_OVERRIDE")
-if _override:
-    REPO_ROOT = Path(_override)
+# Repo/install root: derived from this file's location
+# (<root>/usr/plugins/misformat_guard/tests/ -> 4 levels up), which works
+# both inside the container (/a0) and on the host. REPO_ROOT_OVERRIDE
+# still wins for non-standard layouts.
+REPO_ROOT = Path(
+    os.environ.get("REPO_ROOT_OVERRIDE") or Path(__file__).resolve().parents[4]
+)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -123,8 +126,8 @@ def test_plugin_yaml_bumped_to_v050():
     p = REPO_ROOT / "usr" / "plugins" / "misformat_guard" / "plugin.yaml"
     with p.open(encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    assert data.get("version") == "0.5.0", (
-        f"plugin version is {data.get('version')!r}, expected '0.5.0'"
+    assert data.get("version") == "0.5.1", (
+        f"plugin version is {data.get('version')!r}, expected '0.5.1'"
     )
     assert data.get("min_framework_version") == "2.5.0", (
         f"min_framework_version is {data.get('min_framework_version')!r}, "

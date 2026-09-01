@@ -25,11 +25,14 @@ import pytest
 # to anchor to /a0 (the install root). When running outside Docker
 # (e.g. via `pytest` on the host), the runner can override
 # `REPO_ROOT_OVERRIDE` in the environment.
-REPO_ROOT = Path("/a0")
 import os  # noqa: E402
-_override = os.environ.get("REPO_ROOT_OVERRIDE")
-if _override:
-    REPO_ROOT = Path(_override)
+# Repo/install root: derived from this file's location
+# (<root>/usr/plugins/misformat_guard/tests/ -> 4 levels up), which works
+# both inside the container (/a0) and on the host. REPO_ROOT_OVERRIDE
+# still wins for non-standard layouts.
+REPO_ROOT = Path(
+    os.environ.get("REPO_ROOT_OVERRIDE") or Path(__file__).resolve().parents[4]
+)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
