@@ -33,23 +33,11 @@ primary_cascade_enabled: true
 process_tools_fallback: true
 
 # ---------------------------------------------------------------------------
-# Layer 3 - Legacy hardened parser (v0.3.0 defense-in-depth)
-# ---------------------------------------------------------------------------
-# Vendored DirtyJson with a tighter _is_closing_quote heuristic. Runs
-# inside response_stream_end before the cascade fires. Useful as a fast
-# pre-filter, but the user memory notes the upstream parser is already
-# robust in most cases. Disabled by default in v0.4.0; enable if you see
-# the cascade being called more than you'd like.
-repair_enabled: false
-
-# Cheap path: when true, only run the hardened parser when the core parser
-# already failed. When false, run it on every response. Leave true to avoid
-# per-turn overhead in the happy path.
-repair_only_on_misformat: true
-
-# ---------------------------------------------------------------------------
 # Layer 4 - Prompt steering
 # ---------------------------------------------------------------------------
+# (v0.6.0: the old Layer 3 "hardened parser" repair_enabled /
+# repair_only_on_misformat keys were removed -- that layer's consumer
+# was a core patch deleted in v0.4.1, so the keys did nothing.)
 # Append a "Quoting rules" block to the system prompt. Reduces the rate of
 # misformat-inducing responses by steering the LLM to use safe quote forms.
 quote_rules_enabled: true

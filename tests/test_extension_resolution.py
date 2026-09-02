@@ -79,6 +79,16 @@ def test_dead_process_tools_after_is_gone():
     )
 
 
+def test_dead_v060_extension_dirs_are_gone():
+    """v0.6.0 removed two dead extension points: monologue_start/_10_reset_streak
+    (its params_temporary writes were discarded by agent.py's per-iteration wipe)
+    and response_stream_end/_10_repair_response (Layer 3a, dead since v0.4.1 when
+    the core patch that consumed its stash was removed). The dirs must be gone."""
+    for d in ("monologue_start", "response_stream_end"):
+        p = _plugin_ext_dir(d)
+        assert not p.exists(), f"dead extension dir still exists: {p}"
+
+
 def test_primary_cascade_class_imports():
     """The class must import without error."""
     from usr.plugins.misformat_guard.extensions.python._functions.agent.Agent.call_chat_model_turn.end import (  # noqa: E402
@@ -97,8 +107,10 @@ def test_safety_net_cascade_class_imports():
 def test_api_module_exports_repair_functions():
     from usr.plugins.misformat_guard.api import misformat_repair
     assert callable(misformat_repair.is_misformat)
-    assert callable(misformat_repair.try_repair)
     assert callable(misformat_repair.try_repair_via_utility)
+    # v0.6.0: try_repair (hardened parser) was removed with the dead
+    # Layer 3a extension that was its only consumer.
+    assert not hasattr(misformat_repair, "try_repair")
 
 
 def test_stats_module_exports_attempt_counter():
@@ -121,13 +133,13 @@ def test_utility_repair_prompt_exists():
     assert "tool_args" in content
 
 
-def test_plugin_yaml_bumped_to_v050():
+def test_plugin_yaml_version_lockstep_v060():
     import yaml
     p = REPO_ROOT / "usr" / "plugins" / "misformat_guard" / "plugin.yaml"
     with p.open(encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    assert data.get("version") == "0.5.2", (
-        f"plugin version is {data.get('version')!r}, expected '0.5.2'"
+    assert data.get("version") == "0.6.0", (
+        f"plugin version is {data.get('version')!r}, expected '0.6.0'"
     )
     assert data.get("min_framework_version") == "2.5.0", (
         f"min_framework_version is {data.get('min_framework_version')!r}, "

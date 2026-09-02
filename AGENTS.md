@@ -2,7 +2,7 @@
 
 > Repairs misformatted chat-model responses using a cheap utility model. Intercepts the agent's response stream, detects malformed JSON / broken tool calls, and re-prompts the model (or uses a local grammar repair) to fix the output before the framework tries to parse it.
 
-**Version:** 0.5.0 · **Plugin ID:** `misformat_guard`
+**Version:** 0.6.0 · **Plugin ID:** `misformat_guard`
 
 ## Purpose
 
@@ -33,6 +33,60 @@ For the v0.5.0 tool-repeat guard: drive the agent into a synthetic repeat (ask f
 
 ## Changelog
 
+### v0.6.0 — dormant-code cleanup (2026-09-02)
+
+Third-pass audit cleanup; every change removes something that never worked or
+was silently ignored, plus one real bug fix:
+
+- **Cascade streak + budgets moved to `params_persistent`** — the v0.5.0
+  tool-repeat guard already used the right lifetime, but the misformat
+  cascade's `_mg_streak` lived in `params_temporary`, which `agent.py`
+  wipes at the start of EVERY inner message-loop iteration. The streak was
+  recomputed from history's last message each iteration and could never
+  exceed 1, so a cascade trigger of `> 1` never fired and the
+  `max_per_streak` / `max_total_per_chat` budgets (USED_STREAK_KEY /
+  USED_TOTAL_KEY) never bound anything. The streak and both budgets now
+  live in `params_persistent` (fresh per monologue, survives iterations) —
+  the same lifetime the tool-repeat guard uses. Files:
+  `message_loop_prompts_after/_10_detect_misformat.py`,
+  `call_chat_model_turn/end/_20_repair_via_utility.py`,
+  `process_tools/end/_30_repair_via_utility_fallback.py`. The process-tools
+  fallback's stream buffer (STREAM_KEY) intentionally STAYS on
+  `params_temporary`: it is written and consumed within the same iteration.
+- **DEAD extensions deleted** — `monologue_start/_10_reset_streak.py`
+  (wrote discarded `params_temporary` keys: monologue_start runs BEFORE the
+  first wipe) and `response_stream_end/_10_repair_response.py` (Layer 3a
+  orphan; its REPAIR_KEY stash consumer was removed in v0.4.1).
+  `tests/test_response_repair.py` deleted with it.
+- **Layer 3 hardened-parser REMOVED** — `api/misformat_repair.try_repair()`
+  deleted (the vendored DirtyJson stays: the `misformat_diagnose` tool still
+  uses it); config keys `repair_enabled` / `repair_only_on_misformat` /
+  `threshold` removed from `api/config.py` `_SCALAR_KEYS`,
+  `default_config.yaml`, `webui/config.html`, `tools/misformat_diagnose.py`
+  stats, and README. The stream buffer's gate in
+  `response_stream_chunk/_10_buffer_stream.py` switched to
+  `process_tools_fallback` (its only remaining consumer is the safety net).
+- Version 0.6.0 in lockstep: `plugin.yaml`, `hooks.py` PLUGIN_VERSION,
+  `api/__init__.py __version__`, webui title, README, test version pins.
+
+Third-pass review follow-ups (same release):
+- **`api/misformat_stats.py`** — removed `misformats_total` /
+  `repairs_total` / `aborts_total` / `repair_failures_total` and their
+  `record_*` functions (zero production callers — two were only called by
+  the deleted response_stream_end extension), and the four always-zero
+  WebUI tiles that displayed them.
+- **`tools/misformat_diagnose.py`** — the `history` action now extracts
+  warning text the dict-aware way (real misformat warnings are stored as
+  `{"system_warning": ...}` dicts; the old str-only match always returned
+  `count: 0`).
+- **webui hints corrected** — `max_per_streak` / `max_total_per_chat`
+  values below 1 fall back to the defaults (2/6) at runtime, not "never";
+  `max_total_per_chat` actually bounds per monologue pass (the budget
+  resets each new pass), not per chat session.
+- Stale `agent.py:404` line refs corrected to `agent.py:408`;
+  `_30_repair_via_utility_fallback` docstring now says REENTRY_KEY lives
+  in `params_persistent`; `config.json` pruned of the removed legacy keys.
+
 ### v0.5.0 — Layer 5: tool-repeat guard
 
 **Root cause.** The agent gets stuck in a "reasoning death-loop": it re-emits the *same* tool call (e.g. a `code_editor` patch with a fixed `old_text`) that fails with `"error patching <path>: old_text not found"`, then re-emits it dozens of times, silently burning tokens. None of the framework's existing breakers catch this:
@@ -40,7 +94,7 @@ For the v0.5.0 tool-repeat guard: drive the agent into a synthetic repeat (ask f
 - `_90_stop_unusable_response_loop` only counts `fw.msg_misformat.md` / `fw.msg_repeat.md` *warnings*. This loop emits neither: the patch is a well-formed tool call (no misformat warning), and each iteration's response differs because the tool error is appended to history (no byte-identical repeat → `fw.msg_repeat.md` never fires at agent.py:494).
 - The tool error is a normal tool *result* fed back to the model, not a warning, so the breaker's counter never increments.
 
-**Fix.** A `tool_execute_after` hook (`extensions/python/tool_execute_after/_30_detect_repeat_failures.py`, pure extension point — no core patch). On every tool result it computes a signature `(tool_name, sha1(json.dumps(args, sort_keys=True))[:16])` and classifies the result as an error by message-text regex (the framework's `helpers.tool.Response` has no `.error`/`.status` field; `text_editor` emits `"error patching <path>: ..."`). The streak lives in `loop_data.params_persistent` — **not** `params_temporary`, which `agent.py:404` wipes every iteration (a streak there would never accumulate). `params_persistent` survives across iterations and is fresh per monologue: the right lifetime for "this task is stuck repeating".
+**Fix.** A `tool_execute_after` hook (`extensions/python/tool_execute_after/_30_detect_repeat_failures.py`, pure extension point — no core patch). On every tool result it computes a signature `(tool_name, sha1(json.dumps(args, sort_keys=True))[:16])` and classifies the result as an error by message-text regex (the framework's `helpers.tool.Response` has no `.error`/`.status` field; `text_editor` emits `"error patching <path>: ..."`). The streak lives in `loop_data.params_persistent` — **not** `params_temporary`, which `agent.py:408` wipes every iteration (a streak there would never accumulate). `params_persistent` survives across iterations and is fresh per monologue: the right lifetime for "this task is stuck repeating".
 
   - Same sig + error → `count += 1`. Different (tool, args) → new streak at 1. Non-error → reset to 0 (progress is never penalized).
   - `count >= tool_repeat_warn_threshold` (default 2) and not yet warned → inject a `hist_add_warning` (a `{"system_warning": ...}` history entry the model sees next turn) AND prepend a directive to `response.message` (model sees it inline with the failure this turn). One-shot per sig-streak (`warned` flag) — no spam.

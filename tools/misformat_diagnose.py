@@ -32,6 +32,24 @@ def _err(message: str) -> Response:
     return Response(message=json.dumps({"error": message}, ensure_ascii=False), break_loop=False)
 
 
+def _warning_text(content) -> str | None:
+    """Extract comparable text from a history MessageContent.
+
+    Real misformat warnings are stored as dicts {"system_warning": <text>}
+    (hist_add_warning renders a JSON prompt template, so parse_prompt
+    returns a dict) -- matching only isinstance(content, str) meant the
+    history action always returned count: 0. Mirrors
+    message_loop_prompts_after/_10_detect_misformat.py:_warning_text.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        v = content.get("system_warning")
+        if isinstance(v, str):
+            return v
+    return None
+
+
 class MisformatDiagnose(Tool):
     async def execute(self, **kwargs) -> Response:
         action = (self.args.get("action") or "stats").strip().lower()
@@ -42,7 +60,6 @@ class MisformatDiagnose(Tool):
             return _ok(
                 "misformat_guard stats",
                 enabled=bool(cfg.get("enabled", True)),
-                threshold=int(cfg.get("threshold", 3) or 3),
                 counters=snap,
             )
 
@@ -54,9 +71,9 @@ class MisformatDiagnose(Tool):
                 history = getattr(self.agent, "history", None)
                 messages = getattr(history, "messages", None) if history else None
                 for msg in (messages or []):
-                    content = getattr(msg, "content", "")
-                    if isinstance(content, str) and "misformatted your message" in content.lower():
-                        warnings.append(content)
+                    text = _warning_text(getattr(msg, "content", ""))
+                    if text and "misformatted your message" in text.lower():
+                        warnings.append(text)
                         if len(warnings) >= 5:
                             break
             except Exception as exc:  # noqa: BLE001

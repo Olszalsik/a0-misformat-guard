@@ -36,7 +36,7 @@ LLM will retry -- but we can do better. This hook:
      dispatch and continues.
 
 The re-invocation goes through the @extensible wrapper, so this /end
-hook runs again for it; a REENTRY_KEY flag in params_temporary bounds
+hook runs again for it; a REENTRY_KEY flag in params_persistent bounds
 it to a single level, and the cascade budget counters are incremented
 before the utility call so failed attempts are bounded too.
 
@@ -71,9 +71,15 @@ def _print(msg: str) -> None:
 
 
 def _get_params(loop_data: Any) -> dict:
+    """Budget/re-entry storage. v0.6.0: params_persistent -- agent.py
+    wipes params_temporary every message-loop iteration, so the cascade
+    budgets stored there were per-iteration and never bounded anything.
+    params_persistent survives across iterations (fresh per monologue).
+    The stream buffer is still read from params_temporary -- it is
+    written during the SAME iteration's streaming phase."""
     if loop_data is None:
         return {}
-    params = getattr(loop_data, "params_temporary", None)
+    params = getattr(loop_data, "params_persistent", None)
     return params if isinstance(params, dict) else {}
 
 
@@ -102,6 +108,11 @@ class ProcessToolsFallback(Extension):
         loop_data = getattr(self.agent, "loop_data", None)
         params = _get_params(loop_data)
 
+        # Buffered stream text (response_stream_chunk/_10_buffer_stream.py)
+        # lives in params_temporary: written during THIS iteration's
+        # streaming phase, consumed here before the next wipe.
+        stream_params = getattr(loop_data, "params_temporary", None) if loop_data is not None else None
+
         # v0.5.2 fix: decide from the ACTUAL message the framework passed
         # to process_tools, not from the stream buffer. The buffer is a
         # stale prefix whenever the tool extractor succeeded mid-stream
@@ -123,9 +134,13 @@ class ProcessToolsFallback(Extension):
             else None
         )
 
-        # Buffered stream text (response_stream_chunk/_10_buffer_stream.py).
-        # Only used as the repair input when the call args are unusable.
-        stream_text = params.get(STREAM_KEY)
+        # Buffered stream text is only used as the repair input when the
+        # call args are unusable.
+        stream_text = (
+            stream_params.get(STREAM_KEY)
+            if isinstance(stream_params, dict)
+            else None
+        )
         if not isinstance(stream_text, str) or not stream_text:
             if not isinstance(msg, str) or not msg:
                 return

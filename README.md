@@ -15,13 +15,15 @@ disabled, and uninstalled without touching the framework source.
 
 ## What it does
 
-Five layers, each addressing a different part of the misformat problem:
+Layers, each addressing a different part of the misformat problem
+(v0.6.0 removed the former Layer 3a "hardened parser" extension -- the
+vendored `DirtyJson` remains for the `misformat_diagnose` tool's
+`test_parser` action only):
 
 | Layer | Name | Lives in | What it does |
 |------:|------|----------|--------------|
 | 1 | Primary cascade | `extensions/python/_functions/agent/Agent/call_chat_model_turn/end/_20_repair_via_utility.py` | @extensible /end hook on `call_chat_model_turn`. When the chat model's response fails the JSON tool extractor, calls the cheap utility model to repair it. Substitutes the repaired text into the LLMResult before the monologue loop sees the broken one. |
 | 2 | Safety net | `extensions/python/_functions/agent/Agent/process_tools/end/_30_repair_via_utility_fallback.py` | @extensible /end hook on `process_tools`. Catches the rare misformat that slipped past the primary cascade and re-invokes `process_tools` with the repaired text. |
-| 3a | Hardened parser | `vendor/hardened_dirty_json.py` + `extensions/python/response_stream_end/_10_repair_response.py` | Vendored `DirtyJson` with a tighter `_is_closing_quote` heuristic. Runs as a fast pre-filter before the cascade. |
 | 3b | Quoting rules appended to the system prompt | `extensions/python/system_prompt/_10_quote_rules.py` + `prompts/quote_rules.md` | Tells the LLM to avoid unescaped `"` in string values (the dominant misformat cause). |
 | 3c | Misformat warning rewritten to name the common cause | `extensions/python/hist_add_before/_10_clarify_misformat.py` | Appends a one-liner to the framework's `fw.msg_misformat.md` warning so the LLM self-corrects on the next try. |
 | 4 | Upstream cost-circuit-breaker coordination (v0.4.1) | `extensions/python/_functions/agent/Agent/hist_add_warning/end/_10_misformat_consume_warning.py` | Sits at the same extension point as the framework's `_90_stop_unusable_response_loop` and runs before it. Resets the upstream's `max_consecutive_unusable_responses` counter on every misformat warning so the agent is never stopped by a streak the cascade has seen. |
@@ -33,8 +35,9 @@ The default behaviour:
   utility model is called to repair it. The repaired text replaces the
   broken one and the agent continues. The chat model is never called
   for repairs.
-- Repair attempts are bounded (default: 2 per streak, 6 per chat) so
-  a truly broken chat model cannot burn the utility budget.
+- Repair attempts are bounded (default: 2 per streak, 6 per monologue
+  pass -- the budget resets each new pass) so a truly broken chat model
+  cannot burn the utility budget.
 - The framework's `max_consecutive_unusable_responses` cost circuit
   breaker is bypassed for misformat warnings: the consume hook resets
   the counter before the upstream reads it. The circuit breaker still
@@ -84,13 +87,12 @@ and the v0.4.1 circuit-breaker coordination are the most useful:
 enabled: true                          # master switch
 primary_cascade_enabled: true          # Layer 1
 process_tools_fallback: true           # Layer 1 safety net
-repair_enabled: true                   # Layer 3a hardened parser
-quote_rules_enabled: true              # Layer 3b
-clarify_misformat_warning: true        # Layer 3c
-reset_unusable_loop_on_warning: true   # v0.4.1 Layer 4
+quote_rules_enabled: true              # Layer 4 prompt steering
+clarify_misformat_warning: true        # Layer 4 warning one-liner
+reset_unusable_loop_on_warning: true   # v0.4.1 circuit-breaker coordination
 consecutive_unusable_floor: 5          # v0.4.1 install() sets this on the framework
 install_overrides_consecutive_floor: true  # v0.4.1 set false to leave framework alone
-# Layer 5 (v0.5.0) tool-repeat guard
+# v0.5.0 tool-repeat guard
 tool_repeat_guard_enabled: true
 tool_repeat_warn_threshold: 2          # consecutive identical fails -> warn
 tool_repeat_stop_threshold: 4          # consecutive identical fails -> stop
@@ -102,7 +104,8 @@ cascade:
   mode: utility_repair
   trigger: 1                           # fire on first misformat
   max_per_streak: 2                    # bound per-streak repair attempts
-  max_total_per_chat: 6                # bound per-chat repair attempts
+  max_total_per_chat: 6                # absolute cap (per monologue pass; the
+                                       # budget resets each new pass)
   timeout_s: 30                        # utility-model call timeout
 ```
 

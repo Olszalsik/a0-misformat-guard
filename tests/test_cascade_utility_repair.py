@@ -51,6 +51,9 @@ class _FakeLoopData:
     def __init__(self, streak: int = 0, params: dict | None = None):
         self.consecutive_misformats = streak
         self.params_temporary = params if params is not None else {}
+        # v0.6.0: budgets/streak live in params_persistent (agent.py wipes
+        # params_temporary every message-loop iteration).
+        self.params_persistent = {}
 
 
 class _FakeAgent:
@@ -192,8 +195,8 @@ async def test_misformat_triggers_utility_and_substitutes(_patch_config):
     assert "JSON repair specialist" in agent.utility_calls[0][0]
     assert BROKEN_RESPONSE in agent.utility_calls[0][1]
     assert _result_text(data) == GOOD_REPAIR
-    assert agent.loop_data.params_temporary["_misformat_guard_cascade_used_in_streak"] == 1
-    assert agent.loop_data.params_temporary["_misformat_guard_cascade_used_total"] == 1
+    assert agent.loop_data.params_persistent["_misformat_guard_cascade_used_in_streak"] == 1
+    assert agent.loop_data.params_persistent["_misformat_guard_cascade_used_total"] == 1
 
 
 @pytest.mark.asyncio
@@ -245,7 +248,7 @@ async def test_per_streak_cap_stops_cascade(_patch_config):
     """After max_per_streak cascade calls in one streak, the cascade must stop."""
     _set_cascade(_patch_config, mode="utility_repair", trigger=1, max_per_streak=2)
     agent = _FakeAgent(utility_response=GOOD_REPAIR, streak=1)
-    agent.loop_data.params_temporary["_misformat_guard_cascade_used_in_streak"] = 2
+    agent.loop_data.params_persistent["_misformat_guard_cascade_used_in_streak"] = 2
     ext = _make_extension(agent)
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)
@@ -257,7 +260,7 @@ async def test_per_streak_cap_stops_cascade(_patch_config):
 async def test_total_cap_stops_cascade(_patch_config):
     _set_cascade(_patch_config, mode="utility_repair", trigger=1, max_total_per_chat=4)
     agent = _FakeAgent(utility_response=GOOD_REPAIR, streak=1)
-    agent.loop_data.params_temporary["_misformat_guard_cascade_used_total"] = 4
+    agent.loop_data.params_persistent["_misformat_guard_cascade_used_total"] = 4
     ext = _make_extension(agent)
     data = {"result": (BROKEN_RESPONSE, ""), "args": (), "kwargs": {}}
     await ext.execute(data=data)

@@ -18,11 +18,13 @@ _LOCK = threading.Lock()
 
 # Volatile counters (reset on restart). Persistent counts (e.g. total
 # rep_lifetime) are flushed to disk occasionally.
+# v0.6.0: removed misformats_total / repairs_total / aborts_total /
+# repair_failures_total and their record_* functions -- they had ZERO
+# production callers (record_repair/record_repair_failure were only called
+# by the deleted response_stream_end extension; record_misformat /
+# record_abort had none at all), so the WebUI tiles for them could never
+# increment.
 _volatile: dict[str, int] = {
-    "misformats_total": 0,        # total misformat warnings since start
-    "repairs_total": 0,           # responses the hardened parser salvaged
-    "aborts_total": 0,            # loop aborts triggered by the escape valve
-    "repair_failures_total": 0,   # hardened parser also failed
     # v0.2.0+ cascade counters
     "cascade_attempts_total": 0, # every cascade attempt (success or fail)
     "cascade_calls_total": 0, # utility-model cascade invocations
@@ -42,36 +44,6 @@ def _enabled(agent: Any | None) -> bool:
         return bool(misformat_config.get_config(agent).get("stats_enabled", True))
     except Exception:  # noqa: BLE001
         return False
-
-
-def record_misformat(agent: Any | None) -> None:
-    if not _enabled(agent):
-        return
-    with _LOCK:
-        _volatile["misformats_total"] += 1
-
-
-def record_repair(agent: Any | None) -> None:
-    if not _enabled(agent):
-        return
-    with _LOCK:
-        _volatile["repairs_total"] += 1
-
-
-def record_repair_failure(agent: Any | None) -> None:
-    if not _enabled(agent):
-        return
-    with _LOCK:
-        _volatile["repair_failures_total"] += 1
-
-
-def record_abort(agent: Any | None) -> None:
-    if not _enabled(agent):
-        return
-    with _LOCK:
-        _volatile["aborts_total"] += 1
-
-
 
 
 def record_cascade_attempt(agent: Any | None) -> None:

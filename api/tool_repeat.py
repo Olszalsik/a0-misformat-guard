@@ -42,7 +42,7 @@ Public surface (never raises):
     load_state(loop_data) -> dict | None
         Returns the per-context repeat-streak record from
         ``loop_data.params_persistent`` (NOT ``params_temporary`` --
-        ``agent.py:404`` wipes ``params_temporary`` every iteration, so a
+        ``agent.py:408`` wipes ``params_temporary`` every iteration, so a
         streak there would never accumulate). ``params_persistent``
         survives across iterations and is fresh per monologue: the right
         lifetime. Creates+stores an empty dict if absent; the caller

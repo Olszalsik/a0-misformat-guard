@@ -7,12 +7,17 @@ POST -> body is a JSON object; its keys are merged into the framework
         and the on-disk write.
 
 Config keys accepted (all optional; omitted keys are not changed):
-  enabled, threshold, repair_enabled, repair_only_on_misformat,
-  quote_rules_enabled, clarify_misformat_warning, stats_enabled,
+  enabled, quote_rules_enabled, clarify_misformat_warning, stats_enabled,
   cascade.mode, cascade.trigger, cascade.max_per_streak,
   cascade.max_total_per_chat, cascade.timeout_s, cascade.system_prompt,
   tool_repeat_guard_enabled, tool_repeat_warn_threshold,
   tool_repeat_stop_threshold, tool_repeat_action, tool_repeat_normalize_args
+
+v0.6.0: the legacy `threshold` (v0.2.0 escape valve) and the Layer 3a
+`repair_enabled` / `repair_only_on_misformat` keys are no longer
+accepted -- those features were removed (the escape valve in v0.4.0,
+Layer 3a in v0.6.0). Stale keys in an existing config.json are ignored
+by get_config, so no migration is needed.
 """
 
 from datetime import datetime, timezone
@@ -26,9 +31,6 @@ PLUGIN_NAME = "misformat_guard"
 # Top-level scalar keys (cascade is a sub-dict, handled separately).
 _SCALAR_KEYS = (
     "enabled",
-    "threshold",
-    "repair_enabled",
-    "repair_only_on_misformat",
     "quote_rules_enabled",
     "clarify_misformat_warning",
     "stats_enabled",
@@ -51,9 +53,6 @@ def _coerce(key, value):
     """Coerce the UI form value to the correct Python type."""
     if isinstance(value, bool):
         return value
-    if key == "threshold":
-        n = int(value)
-        return max(1, min(10, n))
     if key in ("tool_repeat_warn_threshold", "tool_repeat_stop_threshold"):
         # 0 disables that half of the guard -- respect it (do NOT clamp to 1).
         n = int(value)

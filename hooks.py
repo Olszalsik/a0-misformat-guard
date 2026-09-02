@@ -35,7 +35,7 @@ from typing import Any
 PLUGIN_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PLUGIN_DIR.parent.parent.parent  # usr/plugins/<name> -> usr/plugins -> usr -> repo root
 
-PLUGIN_VERSION = "0.5.2"
+PLUGIN_VERSION = "0.6.0"
 
 # Framework setting key (see helpers/settings.py:59 and the upstream
 # circuit breaker at extensions/python/_functions/agent/Agent/hist_add_warning/end/

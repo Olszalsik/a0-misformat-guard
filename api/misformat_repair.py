@@ -7,14 +7,6 @@ Public surface:
           `text`. Cheap; no LLM call. Used by the cascade hooks to
           short-circuit the happy path.
 
-    try_repair(text) -> tuple[str | None, bool]
-        - If `text` is already valid, returns (None, False).
-        - If the vendored hardened parser can repair it, returns
-          (repaired, True).
-        - Otherwise returns (None, False). The caller falls through to
-          the utility-model cascade or to the framework's misformat
-          warning.
-
     try_repair_via_utility(agent, text) -> tuple[str | None, bool]
         - Async. Calls agent.call_utility_model (the cheap model) to
           repair `text` into valid JSON. Bounded by cascade.timeout_s via
@@ -87,30 +79,11 @@ def is_misformat(text: str) -> bool:
     return False
 
 
-def try_repair(text: str) -> Tuple[str | None, bool]:
-    """Attempt to repair `text` using the vendored hardened parser.
-
-    Returns (repaired_text_or_None, was_repaired).
-    """
-    if not text or DirtyJson is None:
-        return None, False
-    if _core_parses(text):
-        # Happy path: the core parser already handles this. Don't pay the
-        # hardened-parser cost.
-        return None, False
-    try:
-        result = DirtyJson.parse_string(text)
-    except Exception:  # noqa: BLE001
-        return None, False
-    if result is None:
-        return None, False
-    try:
-        repaired = json.dumps(result, ensure_ascii=False)
-    except Exception:  # noqa: BLE001
-        return None, False
-    if not _core_parses(repaired):
-        return None, False
-    return repaired, True
+# v0.6.0: the old try_repair() (vendored hardened parser) was removed --
+# its only consumer, the response_stream_end Layer 3a extension, has been
+# dead since v0.4.1 (the core patch that read its stash was removed) and
+# is deleted in this release. The vendored DirtyJson stays for the
+# misformat_diagnose tool's parser comparison.
 
 
 # ---------------------------------------------------------------------------

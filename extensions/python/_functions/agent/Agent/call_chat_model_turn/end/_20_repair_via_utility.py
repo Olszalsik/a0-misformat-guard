@@ -56,15 +56,18 @@ def _get_streak(loop_data: Any) -> int:
     """Read the misformat streak from loop_data.
 
     Prefer the framework attribute (if a future version of Agent Zero
-    exposes it); fall back to the plugin's own params_temporary counter
-    (maintained by monologue_start and message_loop_prompts_after).
+    exposes it); fall back to the plugin's own params_persistent counter
+    (maintained by message_loop_prompts_after/_10_detect_misformat.py).
+    v0.6.0: params_persistent, not params_temporary -- agent.py wipes
+    params_temporary every message-loop iteration, so a streak stored
+    there could never exceed 1.
     """
     if loop_data is None:
         return 0
     val = getattr(loop_data, STREAK_ATTR, None)
     if isinstance(val, int):
         return val
-    params = getattr(loop_data, "params_temporary", None)
+    params = getattr(loop_data, "params_persistent", None)
     if isinstance(params, dict):
         try:
             return int(params.get(STREAK_PARAM_KEY, 0) or 0)
@@ -74,9 +77,15 @@ def _get_streak(loop_data: Any) -> int:
 
 
 def _get_params(loop_data: Any) -> dict:
+    """Budget-counter storage. v0.6.0: params_persistent -- agent.py
+    wipes params_temporary every message-loop iteration, so budgets
+    stored there were per-iteration and never bounded anything.
+    params_persistent survives across iterations (fresh per monologue),
+    so max_per_streak / max_total_per_chat actually bind for the
+    monologue run."""
     if loop_data is None:
         return {}
-    params = getattr(loop_data, "params_temporary", None)
+    params = getattr(loop_data, "params_persistent", None)
     return params if isinstance(params, dict) else {}
 
 

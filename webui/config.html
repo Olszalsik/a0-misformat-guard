@@ -1,5 +1,5 @@
 <!--
-  misformat_guard WebUI configuration panel (v0.5.0).
+  misformat_guard WebUI configuration panel (v0.6.0).
 
   All settings are editable from the UI; nothing requires editing
   default_config.yaml by hand. Changes are persisted to the framework
@@ -29,10 +29,9 @@
       </small>
     </h4>
     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px; font-size: 12px;">
-      <div>Misformats<br><strong style="font-size: 1.4em;" data-mg-stat="misformats_total">0</strong></div>
-      <div>Repairs<br><strong style="font-size: 1.4em;" data-mg-stat="repairs_total">0</strong></div>
-      <div>Repair failures<br><strong style="font-size: 1.4em;" data-mg-stat="repair_failures_total">0</strong></div>
-      <div>Aborts<br><strong style="font-size: 1.4em; color: #facc15;" data-mg-stat="aborts_total">0</strong></div>
+      <!-- v0.6.0: Misformats/Repairs/Repair failures/Aborts tiles removed
+           -- those counters had no producers (dead since the Layer 3a
+           removal) and could never increment. -->
       <div>Cascade calls<br><strong style="font-size: 1.4em;" data-mg-stat="cascade_calls_total">0</strong></div>
       <div>Cascade repairs<br><strong style="font-size: 1.4em; color: #4ade80;" data-mg-stat="cascade_repairs_total">0</strong></div>
       <div>Cascade failures<br><strong style="font-size: 1.4em; color: #f87171;" data-mg-stat="cascade_failures_total">0</strong></div>
@@ -82,25 +81,10 @@
   </div>
 
   <!-- ============================================================ -->
-  <!-- LAYER 2 - HARDENED PARSER -->
-  <!-- ============================================================ -->
-  <div class="settings-section">
-    <h4 style="margin: 12px 0 6px 0;">Layer 2 — Hardened parser</h4>
-    <label style="display: block;">
-      <input type="checkbox" x-model="cfg.repair_enabled" />
-      <strong>Repair with the vendored DirtyJson before giving up</strong>
-    </label>
-    <small style="opacity: 0.7;">Handles unescaped quotes inside long string values.</small>
-    <label style="display: block; margin-top: 6px;">
-      <input type="checkbox" x-model="cfg.repair_only_on_misformat" />
-      <strong>Cheap path: only run on misformat</strong>
-    </label>
-    <small style="opacity: 0.7;">When ON, the hardened parser runs only when the core parser already failed (zero per-turn cost on the happy path).</small>
-  </div>
-
-  <!-- ============================================================ -->
   <!-- LAYER 3 - PROMPT STEERING -->
   <!-- ============================================================ -->
+  <!-- (v0.6.0: the old "Layer 2 - Hardened parser" section was removed
+       with the dead Layer 3a repair path.) -->
   <div class="settings-section">
     <h4 style="margin: 12px 0 6px 0;">Layer 3 — Prompt steering</h4>
     <label style="display: block;">
@@ -142,12 +126,12 @@
       <div>
         <label>Max per streak</label>
         <input type="number" min="1" max="20" step="1" x-model.number="cfg.cascade.max_per_streak" style="width: 5em;" />
-        <small>Give up after N repairs in one streak. Set 1+ — 0 means "never".</small>
+        <small>Give up after N repairs in one streak. Values below 1 fall back to the default (2).</small>
       </div>
       <div>
         <label>Max total per chat</label>
         <input type="number" min="1" max="100" step="1" x-model.number="cfg.cascade.max_total_per_chat" style="width: 5em;" />
-        <small>Absolute cap per chat session. Set 1+ — 0 means "never".</small>
+        <small>Absolute cap per monologue pass (the budget resets each new pass). Values below 1 fall back to the default (6).</small>
       </div>
       <div>
         <label>Utility timeout (sec)</label>
@@ -318,8 +302,6 @@
         enabled: true,
         primary_cascade_enabled: true,
         process_tools_fallback: true,
-        repair_enabled: true,
-        repair_only_on_misformat: true,
         quote_rules_enabled: true,
         clarify_misformat_warning: true,
         stats_enabled: true,

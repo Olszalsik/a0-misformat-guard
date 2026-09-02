@@ -47,6 +47,7 @@ from usr.plugins.misformat_guard.extensions.python._functions.agent.Agent.proces
 class _FakeLoopData:
     def __init__(self, params: dict | None = None):
         self.params_temporary = params if params is not None else {}
+        self.params_persistent = {}
 
 
 class _FakeAgent:
@@ -232,7 +233,9 @@ async def test_re_invocation_raises_no_substitution(_patch_config):
 async def test_per_streak_cap_blocks_fallback(_patch_config):
     agent = _FakeAgent(utility_response=VALID_REPAIR, process_tools_return="OK")
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
-    agent.loop_data.params_temporary["_misformat_guard_cascade_used_in_streak"] = 2
+    # v0.6.0: budgets live in params_persistent (params_temporary is wiped
+    # by agent.py every message-loop iteration).
+    agent.loop_data.params_persistent["_misformat_guard_cascade_used_in_streak"] = 2
     ext = _make_extension(agent)
     data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
@@ -244,7 +247,7 @@ async def test_per_streak_cap_blocks_fallback(_patch_config):
 async def test_total_cap_blocks_fallback(_patch_config):
     agent = _FakeAgent(utility_response=VALID_REPAIR, process_tools_return="OK")
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
-    agent.loop_data.params_temporary["_misformat_guard_cascade_used_total"] = 6
+    agent.loop_data.params_persistent["_misformat_guard_cascade_used_total"] = 6
     ext = _make_extension(agent)
     data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)

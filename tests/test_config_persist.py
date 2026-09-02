@@ -84,11 +84,12 @@ def test_coerce_action_validated():
     assert config_mod._coerce("tool_repeat_action", "") == "warn_then_stop"
 
 
-def test_coerce_threshold_does_not_touch_legacy_threshold():
-    """The legacy ``threshold`` (Layer 3 hardened-parser) keeps its own
-    [1,10] clamp and is NOT affected by the new tool-repeat coercion."""
-    assert config_mod._coerce("threshold", 0) == 1  # legacy clamps to >=1
-    assert config_mod._coerce("threshold", 5) == 5
+def test_removed_legacy_keys_not_accepted():
+    """v0.6.0 removed the v0.2.0 escape-valve ``threshold`` and the dead
+    Layer 3a ``repair_enabled`` / ``repair_only_on_misformat`` keys: they
+    must not be coerced/persisted as scalar keys any more."""
+    for k in ("threshold", "repair_enabled", "repair_only_on_misformat"):
+        assert k not in config_mod._SCALAR_KEYS, f"{k} should be gone from _SCALAR_KEYS"
 
 
 # ---------------------------------------------------------------------------

@@ -3,12 +3,12 @@ title: Misformat Guard
 description: >
   Repairs misformatted chat-model responses (bad JSON tool requests) with
   a cheap utility-model call so Agent Zero never stalls or aborts on them.
-  v0.5.0 adds Layer 5: a tool-repeat guard that breaks the "reasoning
-  death-loop" where the agent re-emits the SAME failing tool call dozens
-  of times (warns at 2, hard-stops at 4) -- the loop none of the framework's
-  own breakers catch. No core patch -- pure v2.5 extension hooks. See the
-  README for the full 5-layer architecture and configuration.
-version: 0.5.2
+  Also breaks the "reasoning death-loop" where the agent re-emits the SAME
+  failing tool call dozens of times (warns at 2, hard-stops at 4) -- the
+  loop none of the framework's own breakers catch. No core patch -- pure
+  v2.5 extension hooks. See the README for the full architecture and
+  configuration.
+version: 0.6.0
 min_framework_version: 2.5.0
 settings_sections:
   - agent

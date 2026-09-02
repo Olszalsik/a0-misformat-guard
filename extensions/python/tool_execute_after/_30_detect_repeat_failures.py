@@ -25,7 +25,7 @@ never a false hit. Sort prefix ``_30_`` orders it after the framework's
 own ``_10_mask_secrets`` so detection sees the final masked message.
 
 State lives in ``loop_data.params_persistent`` (NOT
-``params_temporary`` -- ``agent.py:404`` wipes ``params_temporary`` every
+``params_temporary`` -- ``agent.py:408`` wipes ``params_temporary`` every
 iteration, so a streak there would never accumulate).
 ``params_persistent`` survives across iterations and is fresh per
 monologue: the right lifetime for "this task is stuck repeating".

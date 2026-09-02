@@ -25,7 +25,13 @@ class DetectMisformat(Extension):
         try:
             if not self.agent or loop_data is None:
                 return
-            params = getattr(loop_data, 'params_temporary', None)
+            # v0.6.0: the streak lives in params_persistent, NOT
+            # params_temporary -- agent.py wipes params_temporary at the
+            # start of EVERY message-loop iteration, so a streak there was
+            # capped at 1 and a cascade trigger > 1 could never fire.
+            # params_persistent survives across iterations (fresh per
+            # monologue), which is exactly the streak's lifetime.
+            params = getattr(loop_data, 'params_persistent', None)
             if not isinstance(params, dict):
                 return
             history = getattr(self.agent, 'history', None)
