@@ -123,10 +123,12 @@ def _patch_config(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_happy_path_no_repair_needed(_patch_config):
-    """If process_tools returned non-None, the safety net must no-op."""
+    """If process_tools returned non-None, the safety net must no-op.
+    (v0.5.2 regression: data['args'] uses the REAL @extensible shape --
+    (agent_self, msg), slot 0 is `self`.)"""
     agent = _FakeAgent(process_tools_return="some tool message")
     ext = _make_extension(agent)
-    data = {"result": "some tool message", "exception": None, "args": (), "kwargs": {}}
+    data = {"result": "some tool message", "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0
     assert data["result"] == "some tool message"
@@ -139,7 +141,7 @@ async def test_exception_path_no_repair(_patch_config):
     agent = _FakeAgent()
     ext = _make_extension(agent)
     err = RuntimeError("boom")
-    data = {"result": None, "exception": err, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": err, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0
     assert data["exception"] is err
@@ -147,11 +149,12 @@ async def test_exception_path_no_repair(_patch_config):
 
 
 @pytest.mark.asyncio
-async def test_no_buffer_text_no_repair(_patch_config):
-    """If the stream buffer is empty, the safety net cannot repair anything."""
+async def test_no_msg_and_no_buffer_no_repair(_patch_config):
+    """With no str in the call args AND no stream buffer, there is no
+    repair input -- the safety net must no-op."""
     agent = _FakeAgent(utility_response=VALID_REPAIR)
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(),), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0
     assert data["result"] is None  # original None stands
@@ -164,7 +167,7 @@ async def test_misformat_triggers_repair(_patch_config):
     agent = _FakeAgent(utility_response=VALID_REPAIR, process_tools_return="OK")
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 1, "utility model must be called"
     assert len(agent.process_tools_invocations) == 1, "process_tools must be re-invoked"
@@ -182,7 +185,7 @@ async def test_utility_returns_bad_text_no_substitution(_patch_config):
     agent = _FakeAgent(utility_response="not json at all", process_tools_return="OK")
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 1
     assert len(agent.process_tools_invocations) == 0
@@ -199,7 +202,7 @@ async def test_re_invocation_returning_none_no_substitution(_patch_config):
     agent = _FakeAgent(utility_response=VALID_REPAIR, process_tools_return=None)
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
     assert data["result"] is None, (
         "if re-invocation returns None, original None must stand -- never "
@@ -220,7 +223,7 @@ async def test_re_invocation_raises_no_substitution(_patch_config):
     agent.process_tools = _raise  # type: ignore[assignment]
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)  # must not raise
     assert data["result"] is None
 
@@ -231,7 +234,7 @@ async def test_per_streak_cap_blocks_fallback(_patch_config):
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
     agent.loop_data.params_temporary["_misformat_guard_cascade_used_in_streak"] = 2
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0
     assert data["result"] is None
@@ -243,7 +246,7 @@ async def test_total_cap_blocks_fallback(_patch_config):
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
     agent.loop_data.params_temporary["_misformat_guard_cascade_used_total"] = 6
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0
     assert data["result"] is None
@@ -255,7 +258,7 @@ async def test_fallback_disabled_no_op(_patch_config):
     agent = _FakeAgent(utility_response=VALID_REPAIR, process_tools_return="OK")
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
     assert len(agent.utility_calls) == 0
     assert data["result"] is None
@@ -270,7 +273,7 @@ async def test_utility_raises_no_substitution(_patch_config):
     )
     agent.loop_data.params_temporary["_misformat_guard_stream_full"] = BROKEN_TEXT
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)  # must not raise
     assert data["result"] is None
 
@@ -288,7 +291,7 @@ async def test_never_calls_chat_model(_patch_config):
     agent.call_chat_model = _explode  # type: ignore[attr-defined]
     agent.call_chat_model_turn = _explode  # type: ignore[attr-defined]
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     await ext.execute(data=data)
     assert data["result"] == "OK"
 
@@ -310,7 +313,7 @@ async def test_stale_api_module_missing_is_misformat(_patch_config, monkeypatch)
         raising=False,
     )
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     # Must not raise
     await ext.execute(data=data)
     assert data["result"] == "OK", (
@@ -331,10 +334,55 @@ async def test_stale_api_module_missing_repair_function(_patch_config, monkeypat
         raising=False,
     )
     ext = _make_extension(agent)
-    data = {"result": None, "exception": None, "args": (), "kwargs": {}}
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
     # Must not raise
     await ext.execute(data=data)
     assert data["result"] is None, (
         "with no try_repair_via_utility, the safety net must leave "
         "data['result'] as None"
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.5.2 regression: msg extraction from the real extensible args shape
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_msg_read_from_args_not_slot0_self(_patch_config):
+    """The @extensible wrapper passes data['args'] == (agent_self, msg):
+    slot 0 is `self`, the message is the first str. The hook must repair
+    from THAT message -- v0.5.1 read slot 0, got `self` (not a str), and
+    silently fell back to the stale stream buffer."""
+    agent = _FakeAgent(utility_response=VALID_REPAIR, process_tools_return="OK")
+    # NO stream buffer at all: the repair can only come from the args.
+    ext = _make_extension(agent)
+    data = {"result": None, "exception": None, "args": (object(), BROKEN_TEXT), "kwargs": {}}
+    await ext.execute(data=data)
+    assert len(agent.utility_calls) == 1, (
+        "the utility model must be called with the msg from args even "
+        "when the stream buffer is empty"
+    )
+    assert BROKEN_TEXT in agent.utility_calls[0][1]
+    assert data["result"] == "OK"
+
+
+@pytest.mark.asyncio
+async def test_parseable_msg_with_stale_buffer_no_repair(_patch_config):
+    """v0.5.1 misfire scenario: a successful mid-stream extraction leaves
+    a truncated JSON prefix in the stream buffer. When the framework later
+    hands us a message that PARSES as a tool request, this was an ordinary
+    dispatch -- the stale buffer must NOT trigger a utility repair or a
+    re-invocation (which would re-execute the tool)."""
+    agent = _FakeAgent(utility_response=VALID_REPAIR, process_tools_return="OK")
+    agent.loop_data.params_temporary["_misformat_guard_stream_full"] = '{"tool": "resp'
+    ext = _make_extension(agent)
+    data = {"result": None, "exception": None, "args": (object(), VALID_REPAIR), "kwargs": {}}
+    await ext.execute(data=data)
+    assert len(agent.utility_calls) == 0, (
+        "a parseable message means nothing to repair, even with a stale "
+        "truncated buffer"
+    )
+    assert len(agent.process_tools_invocations) == 0, (
+        "no re-invocation -- the tool must not be executed twice"
+    )
+    assert data["result"] is None

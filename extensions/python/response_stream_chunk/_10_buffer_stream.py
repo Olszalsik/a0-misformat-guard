@@ -28,7 +28,9 @@ class StreamBuffer(Extension):
         cfg = misformat_config.get_config(self.agent)
         if not cfg.get("enabled", True):
             return
-        if not cfg.get("repair_enabled", True):
+        # Default mirrors default_config.yaml (repair_enabled: false);
+        # get_plugin_config does not merge defaults into config.json.
+        if not cfg.get("repair_enabled", False):
             return
         if loop_data is None or not isinstance(stream_data, dict):
             return

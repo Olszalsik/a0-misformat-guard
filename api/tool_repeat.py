@@ -75,14 +75,18 @@ STATE_KEY = "_misformat_guard_tool_repeat"
 # Default error indicators. Matched case-insensitively against the tool
 # result message. ``^error\\b`` catches the text_editor family
 # ("error patching <path>: old_text not found", "error writing ...").
-# "old_text not found" / "traceback" catch common failure strings that may
-# appear mid-message. Tunable via the ``tool_repeat_error_patterns`` key.
+# The traceback pattern requires Python's full traceback header, and the
+# vague ``^failed\\b`` pattern was removed in v0.5.2: bare substrings
+# classified SUCCESSFUL results as errors (e.g. an agent legitimately
+# re-reading a log file that contains a traceback or the word "failed"),
+# and four identical legitimate calls then hit the stop threshold and
+# killed the turn. Add patterns back via ``tool_repeat_error_patterns``
+# for tools that format errors differently.
 _DEFAULT_ERROR_PATTERNS = (
     r"^error\b",
     r"^error:",
     r"old_text not found",
-    r"traceback",
-    r"^failed\b",
+    r"traceback \(most recent call last\)",
 )
 
 # Tools that should never be tracked. The final-answer tool ends the loop

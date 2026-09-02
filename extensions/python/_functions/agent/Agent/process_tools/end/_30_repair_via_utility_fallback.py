@@ -22,10 +22,12 @@ LLM will retry -- but we can do better. This hook:
   1. Detects data['result'] is None AND data['exception'] is None (the
      misformat path, not an exception path).
   2. Checks the ACTUAL message the framework passed to process_tools
-     (v0.5.1: not the stream buffer -- the buffer is a truncated prefix
-     whenever extraction succeeded mid-stream, which would misfire on
-     every ordinary successful tool call). If the message parses as a
-     tool request, this was a normal dispatch and we return.
+     (v0.5.2: scanned from data['args'], whose slot 0 is `self` because
+     the @extensible wrapper passes bound-method args -- not the stream
+     buffer, which is a truncated prefix whenever extraction succeeded
+     mid-stream and would misfire on every ordinary successful tool
+     call). If the message parses as a tool request, this was a normal
+     dispatch and we return.
   3. Calls the utility model to repair the unparseable message. If the
      repair is parseable, re-invokes the framework's process_tools with
      the repaired text.
@@ -94,23 +96,30 @@ class ProcessToolsFallback(Extension):
         if not cfg.get("process_tools_fallback", True):
             return
         cascade = cfg.get("cascade") if isinstance(cfg, dict) else None
-        if not isinstance(cascade, dict) or cascade.get("mode", "off") != "utility_repair":
+        if not isinstance(cascade, dict) or cascade.get("mode", "utility_repair") != "utility_repair":
             return
 
         loop_data = getattr(self.agent, "loop_data", None)
         params = _get_params(loop_data)
 
-        # v0.5.1 fix: decide from the ACTUAL message the framework passed
+        # v0.5.2 fix: decide from the ACTUAL message the framework passed
         # to process_tools, not from the stream buffer. The buffer is a
         # stale prefix whenever the tool extractor succeeded mid-stream
         # (the framework early-returns before the chunk hook runs on the
         # final chunk), so buffer-based checks misfire on every ordinary
         # successful tool call and would re-execute the tool.
+        #
+        # The @extensible wrapper passes the BOUND method's args, i.e.
+        # data["args"] == (agent_instance, msg) -- index 0 is `self`, the
+        # message is the first str in the tuple (the framework's own
+        # _90_stop_unusable_response_loop.py reads call_args[1] for the
+        # same reason). Scan for the str arg instead of hardcoding an
+        # index, so future signature changes degrade to "no msg" rather
+        # than to `self`.
         call_args = data.get("args")
         msg = (
-            call_args[0]
-            if isinstance(call_args, tuple) and call_args
-            and isinstance(call_args[0], str)
+            next((a for a in call_args if isinstance(a, str)), None)
+            if isinstance(call_args, tuple)
             else None
         )
 

@@ -79,8 +79,11 @@ cascade:
   mode: "utility_repair"
 
   # Fire only when the consecutive-misformat streak is at least this high.
-  # 1 = fire on the first misformat (cheap path catches it). Higher values
-  #     let the quote_rules prompt-steering try to self-correct first.
+  # The streak is counted BEFORE the LLM call (from history that does not
+  # yet include the current response), so 1 means the cascade fires on the
+  # SECOND consecutive misformat -- the first one goes to the framework's
+  # own retry. Higher values let the quote_rules prompt-steering try to
+  # self-correct first.
   trigger: 1
 
   # Maximum number of utility-repair calls in a single misformat streak.
@@ -182,15 +185,16 @@ tool_repeat_action: "warn_then_stop"
 # Regexes (case-insensitive) that classify a tool result message as an
 # ERROR. The framework's tool Response has no .error/.status field, so
 # error detection is by message text -- the text_editor family emits
-# "error <action> <path>: <error>". Add your own patterns for tools that
-# format errors differently. A non-matching result resets the streak
-# (treated as progress).
+# "error <action> <path>: <error>". Keep patterns SPECIFIC: a bare
+# "traceback" or "failed" substring also matches successful results
+# (e.g. re-reading a log file that contains one), and four identical
+# legitimate calls would then hit the stop threshold. A non-matching
+# result resets the streak (treated as progress).
 tool_repeat_error_patterns:
   - "^error\\b"
   - "^error:"
   - "old_text not found"
-  - "traceback"
-  - "^failed\\b"
+  - "traceback \\(most recent call last\\)"
 
 # Tools never tracked (the streak is not accumulated for them). The
 # final-answer tool ends the loop on success and is not a "stuck repeat"

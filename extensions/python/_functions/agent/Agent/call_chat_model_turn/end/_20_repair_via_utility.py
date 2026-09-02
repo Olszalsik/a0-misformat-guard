@@ -139,7 +139,8 @@ class CascadeUtilityRepair(Extension):
         if not cfg.get("primary_cascade_enabled", True):
             return
         cascade = cfg.get("cascade") if isinstance(cfg, dict) else None
-        if not isinstance(cascade, dict) or cascade.get("mode", "off") != "utility_repair":
+        # Inline default mirrors default_config.yaml (mode: utility_repair).
+        if not isinstance(cascade, dict) or cascade.get("mode", "utility_repair") != "utility_repair":
             return
 
         response_text = _extract_response_text(data)

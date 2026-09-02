@@ -27,11 +27,16 @@ CLARIFY_FRAGMENT = (
 
 
 def _extract_text(content: Any) -> str | None:
-    """Return a plain-text view of a MessageContent value, or None."""
+    """Return a plain-text view of a MessageContent value, or None.
+
+    hist_add_warning stores fw.warning.md's parsed JSON template, whose
+    only text key is "system_warning" (v0.5.2 fix -- without it this
+    hook never fired on real warnings).
+    """
     if isinstance(content, str):
         return content
     if isinstance(content, dict):
-        for key in ("content", "message", "text"):
+        for key in ("system_warning", "content", "message", "text"):
             v = content.get(key)
             if isinstance(v, str):
                 return v
@@ -42,7 +47,7 @@ def _set_text(content: Any, new_text: str) -> Any:
     if isinstance(content, str):
         return new_text
     if isinstance(content, dict):
-        for key in ("content", "message", "text"):
+        for key in ("system_warning", "content", "message", "text"):
             if key in content and isinstance(content[key], str):
                 content[key] = new_text
                 return content
