@@ -57,11 +57,13 @@ from usr.plugins.misformat_guard.api import (
     misformat_repair,
     misformat_stats,
 )
+from usr.plugins.misformat_guard.api.misformat_config import (
+    CASCADE_USED_STREAK_KEY as USED_STREAK_KEY,
+    CASCADE_USED_TOTAL_KEY as USED_TOTAL_KEY,
+)
 
 
 STREAM_KEY = "_misformat_guard_stream_full"
-USED_STREAK_KEY = "_misformat_guard_cascade_used_in_streak"
-USED_TOTAL_KEY = "_misformat_guard_cascade_used_total"
 REENTRY_KEY = "_misformat_guard_fallback_active"
 
 

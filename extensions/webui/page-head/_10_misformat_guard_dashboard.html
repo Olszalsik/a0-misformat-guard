@@ -1,2 +1,12 @@
-<!-- Load the misformat_guard dashboard store on every page. -->
-<script src="/plugins/misformat_guard/webui/dashboard-store.js" defer></script>
+<!-- Load the misformat_guard dashboard store on every page.
+
+     The asset route is /usr/plugins/<name>/<path> (helpers/ui_server.py
+     serve_plugin_asset) and the path is resolved inside the plugin's webui/
+     dir. The previous "/plugins/..." prefix 404'd, so window.MisformatGuardDashboard
+     was never defined and every button in webui/config.html threw
+     "MisformatGuardDashboard not loaded".
+
+     type="module" is required: the store imports the framework's fetchApi
+     from /js/api.js for its X-CSRF-Token injection. A classic script cannot
+     import, which is what left the old POSTs without a token (403). -->
+<script type="module" src="/usr/plugins/misformat_guard/webui/dashboard-store.js"></script>

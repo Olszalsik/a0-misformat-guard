@@ -35,7 +35,7 @@ from typing import Any
 PLUGIN_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PLUGIN_DIR.parent.parent.parent  # usr/plugins/<name> -> usr/plugins -> usr -> repo root
 
-PLUGIN_VERSION = "0.6.0"
+PLUGIN_VERSION = "0.7.0"
 
 # Framework setting key (see helpers/settings.py:59 and the upstream
 # circuit breaker at extensions/python/_functions/agent/Agent/hist_add_warning/end/
@@ -154,15 +154,26 @@ def _install_consecutive_floor() -> dict[str, Any] | None:
         from helpers import settings as settings_helper
         s = settings_helper.get_settings()
         s[FRAMEWORK_CONSECUTIVE_KEY] = new_value
-        settings_helper.normalize_settings(s)
-        # Persist the change via the framework's settings API.
-        try:
-            settings_helper.update_settings(s)
-        except AttributeError:
-            # Older framework API. Best-effort: leave the in-memory
-            # setting; the user can still adjust from the WebUI.
-            _log("install: helpers.settings has no update_settings(); "
-                 "in-memory change applied, persisted change skipped")
+        s = settings_helper.normalize_settings(s) or s
+        # Persist via the framework's real settings API. There is no
+        # `update_settings` in helpers/settings.py — the writer is
+        # `set_settings(settings, apply=True)`. The old code called the
+        # non-existent name inside a `except AttributeError`, so EVERY
+        # install silently took the fallback branch: the change was never
+        # persisted, while .plugin_state.json recorded it as applied and
+        # uninstall() later "restored" a value that had never changed.
+        writer = getattr(settings_helper, "set_settings", None)
+        if not callable(writer):
+            _log("install: helpers.settings has no set_settings(); "
+                 "cannot persist the consecutive floor")
+            return {
+                "previous_value": current_i,
+                "new_value": current_i,
+                "floor": floor,
+                "applied": False,
+                "error": "no settings writer available",
+            }
+        writer(s, apply=True)
     except Exception as exc:  # noqa: BLE001
         _log(f"install: failed to apply consecutive floor ({exc!r}); "
              f"original value preserved in .plugin_state.json")
@@ -198,12 +209,13 @@ def _uninstall_consecutive_floor() -> dict[str, Any] | None:
         from helpers import settings as settings_helper
         s = settings_helper.get_settings()
         s[FRAMEWORK_CONSECUTIVE_KEY] = int(original)
-        settings_helper.normalize_settings(s)
-        try:
-            settings_helper.update_settings(s)
-        except AttributeError:
-            _log("uninstall: helpers.settings has no update_settings(); "
-                 "in-memory change applied, persisted change skipped")
+        s = settings_helper.normalize_settings(s) or s
+        # helpers/settings.py has no update_settings(); set_settings is the
+        # writer. See _install_consecutive_floor for the full explanation.
+        writer = getattr(settings_helper, "set_settings", None)
+        if not callable(writer):
+            raise RuntimeError("helpers.settings has no set_settings()")
+        writer(s, apply=True)
     except Exception as exc:  # noqa: BLE001
         _log(f"uninstall: failed to restore consecutive setting ({exc!r}); "
              f"original value still in .plugin_state.json: {original!r}")

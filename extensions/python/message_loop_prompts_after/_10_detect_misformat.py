@@ -1,4 +1,8 @@
 from helpers.extension import Extension
+from usr.plugins.misformat_guard.api.misformat_config import (
+    CASCADE_USED_STREAK_KEY,
+    CASCADE_USED_TOTAL_KEY,
+)
 
 
 def _warning_text(content) -> str | None:
@@ -40,6 +44,9 @@ class DetectMisformat(Extension):
             messages = getattr(history, 'messages', None)
             if not messages:
                 params['_mg_streak'] = 0
+                # A fresh context is a fresh streak: clear the per-streak
+                # repair budget so `max_per_streak` means "per streak".
+                params[CASCADE_USED_STREAK_KEY] = 0
                 return
             last = messages[-1]
             text = _warning_text(getattr(last, 'content', ''))
@@ -52,5 +59,15 @@ class DetectMisformat(Extension):
                 params['_mg_streak'] = int(params.get('_mg_streak', 0) or 0) + 1
             else:
                 params['_mg_streak'] = 0
+                # The misformat streak ended, so the per-streak repair budget
+                # must reset with it. Without this, USED_STREAK_KEY was only
+                # ever incremented, so `max_per_streak` silently degraded
+                # into a per-monologue cap: after two repairs anywhere in a
+                # monologue the cascade was dead for the rest of it, even
+                # though the config describes it as per streak.
+                #
+                # CASCADE_USED_TOTAL_KEY is deliberately NOT reset here — it is
+                # the `max_total_per_chat` bound and spans the whole monologue.
+                params[CASCADE_USED_STREAK_KEY] = 0
         except Exception:
             pass

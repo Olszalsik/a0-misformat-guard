@@ -39,12 +39,14 @@ from usr.plugins.misformat_guard.api import (
     misformat_repair,
     misformat_stats,
 )
+from usr.plugins.misformat_guard.api.misformat_config import (
+    CASCADE_USED_STREAK_KEY as USED_STREAK_KEY,
+    CASCADE_USED_TOTAL_KEY as USED_TOTAL_KEY,
+)
 
 
 STREAK_ATTR = "consecutive_misformats"
 STREAK_PARAM_KEY = "_mg_streak"
-USED_STREAK_KEY = "_misformat_guard_cascade_used_in_streak"
-USED_TOTAL_KEY = "_misformat_guard_cascade_used_total"
 
 
 def _print(msg: str) -> None:
@@ -118,24 +120,73 @@ def _extract_reasoning_text(data: dict) -> str:
     return getattr(result, "reasoning", "") or ""
 
 
-def _build_new_result(data: dict, repaired_text: str) -> Any:
-    """Build a new LLMResult-like object with the repaired response.
+def _apply_repaired_response(data: dict, repaired_text: str) -> bool:
+    """Substitute the repaired text into data['result'] WITHOUT rebuilding it.
 
-    We try to import the framework's LLMResult class and use it so
-    downstream code keeps type-checker / dataclass compatibility. If
-    the import fails, we fall back to the same shape (tuple) the
-    framework already accepts on the way in.
+    The previous implementation constructed a brand-new `LLMResult(response=…,
+    reasoning=…)`. `LLMResult` (helpers/llm_result.py) carries twelve fields;
+    that constructor call silently reset ten of them to their defaults:
+
+        response_id, previous_response_id   -> Responses-API chaining broken
+        input_items, output_items           -> native function-call items and
+                                               their call_ids lost
+        provider_model_key, mode, state     -> protocol/routing metadata lost
+        usage                               -> token accounting lost
+        raw, capability                     -> provider output + capability
+                                               metadata lost
+
+    Per the framework contract, `Agent.hist_add_ai_response` owns
+    Responses-API state advancement via `_remember_llm_result_state` and model
+    turns pass an LLMResult; replacing the object wholesale defeats that.
+
+    The repair is a rewrite of THIS turn's response text, so mutating only
+    `.response` is both correct and minimal. Everything else the provider
+    returned stays exactly as it was.
+
+    Returns True when the substitution was made.
     """
-    reasoning = _extract_reasoning_text(data)
-    try:
-        from helpers.llm import LLMResult  # type: ignore
-        return LLMResult(response=repaired_text, reasoning=reasoning)
-    except Exception:  # noqa: BLE001
+    result = data.get("result")
+    if result is None:
+        return False
+
+    # Tuple/legacy shape: only slot 0 carries the text.
+    if isinstance(result, tuple) and result:
         try:
-            from agent import LLMResult  # type: ignore
-            return LLMResult(response=repaired_text, reasoning=reasoning)
-        except Exception:  # noqa: BLE001
-            return (repaired_text, reasoning)
+            data["result"] = (repaired_text,) + tuple(result[1:])
+            return True
+        except Exception:  # noqa: BLE001 - exotic tuple subclass
+            return False
+
+    # Preferred path: mutate the existing LLMResult.
+    if hasattr(result, "response"):
+        try:
+            result.response = repaired_text
+            return True
+        except Exception:  # noqa: BLE001 - frozen/slots object
+            pass
+
+    # Last resort, and still field-preserving: copy every field across, then
+    # override just the text. Used only if the object rejects attribute
+    # assignment.
+    try:
+        from helpers.llm_result import LLMResult  # type: ignore
+
+        fields = getattr(result, "__dataclass_fields__", None)
+        if fields:
+            kwargs = {f: getattr(result, f) for f in fields if hasattr(result, f)}
+            kwargs["response"] = repaired_text
+            data["result"] = LLMResult(**kwargs)
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        from agent import LLMResult  # type: ignore
+
+        data["result"] = LLMResult(response=repaired_text)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 class CascadeUtilityRepair(Extension):
@@ -230,8 +281,17 @@ class CascadeUtilityRepair(Extension):
                 _print("utility model did not produce a parseable repair")
             return
 
-        # Substitute the repaired response into data['result'].
-        data["result"] = _build_new_result(data, repaired)
+        # Substitute the repaired response into data['result'] IN PLACE. Do
+        # not rebuild it: rebuilding drops the provider's Responses-API
+        # metadata. See _apply_repaired_response.
+        if not _apply_repaired_response(data, repaired):
+            # Could not substitute; leave the original misformatted response
+            # in place so the framework's own warning + retry path runs.
+            misformat_stats.record_cascade_failure(self.agent)
+            if cfg.get("verbose", False):
+                _print("could not substitute repaired text; original stands")
+            return
+
         params[USED_STREAK_KEY] = used_streak + 1
         params[USED_TOTAL_KEY] = used_total + 1
         misformat_stats.record_cascade_repair(self.agent)

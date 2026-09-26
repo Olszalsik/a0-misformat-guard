@@ -133,18 +133,46 @@ def test_utility_repair_prompt_exists():
     assert "tool_args" in content
 
 
-def test_plugin_yaml_version_lockstep_v060():
+def test_plugin_yaml_version_lockstep():
+    """The manifest version and the two in-code version constants must agree.
+
+    v0.7.0 removed the `min_framework_version` assertion that used to live
+    here: nothing in the framework reads that key, so the plugin was pinning
+    a version gate that never fired. The v2.5 requirement is now documented
+    in AGENTS.md rather than asserted against a dead manifest field.
+    """
     import yaml
     p = REPO_ROOT / "usr" / "plugins" / "misformat_guard" / "plugin.yaml"
     with p.open(encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    assert data.get("version") == "0.6.0", (
-        f"plugin version is {data.get('version')!r}, expected '0.6.0'"
+
+    expected = "0.7.0"
+    assert data.get("version") == expected, (
+        f"plugin version is {data.get('version')!r}, expected {expected!r}"
     )
-    assert data.get("min_framework_version") == "2.5.0", (
-        f"min_framework_version is {data.get('min_framework_version')!r}, "
-        f"expected '2.5.0' (the cascade uses v2.5-only hooks)"
+
+    # Dead keys must stay dead: PluginMetadata ignores them, so leaving them
+    # in the manifest only misleads readers.
+    assert "min_framework_version" not in data, (
+        "min_framework_version is not a framework key and is never read"
     )
+    assert "discovery" not in data, "discovery is not a framework key"
+
+    # `developer` does not mount a settings subsection, so listing it
+    # produced an entry the user could not reach.
+    assert set(data.get("settings_sections") or []) <= {"agent", "external"}, (
+        "settings_sections must only list sections the WebUI actually mounts"
+    )
+
+    sys.path.insert(0, str(REPO_ROOT / "usr" / "plugins" / "misformat_guard"))
+    try:
+        import hooks as hooks_mod
+        assert hooks_mod.PLUGIN_VERSION == expected
+    finally:
+        sys.path.pop(0)
+
+    from usr.plugins.misformat_guard.api import __version__ as api_version
+    assert api_version == expected
 
 
 def test_hooks_py_no_longer_applies_core_patch():

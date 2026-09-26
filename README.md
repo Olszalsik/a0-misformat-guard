@@ -16,9 +16,11 @@ disabled, and uninstalled without touching the framework source.
 ## What it does
 
 Layers, each addressing a different part of the misformat problem
-(v0.6.0 removed the former Layer 3a "hardened parser" extension -- the
-vendored `DirtyJson` remains for the `misformat_diagnose` tool's
-`test_parser` action only):
+(v0.6.0 removed the former Layer 3a "hardened parser" extension. The
+vendored `vendor/hardened_dirty_json.py` is retained only because
+`tests/test_hardened_dirty_json.py` covers it; no production code path
+imports it any more — the docstring in `api/misformat_repair.py` used to
+claim `misformat_diagnose` still used it, and that was wrong):
 
 | Layer | Name | Lives in | What it does |
 |------:|------|----------|--------------|

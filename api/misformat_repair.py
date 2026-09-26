@@ -34,11 +34,21 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent
 # Use a try/except so the plugin can be imported even if the venv has
 # the helpers package at a different path. The hardened parser is a
 # vendored copy and does not depend on helpers.dirty_json.
+#
+# The vendored `vendor/hardened_dirty_json.py` (DirtyJson) is NOT imported
+# here any more: Layer 3a was removed in v0.6.0 and nothing in a production
+# path uses it. It is retained, with its tests, purely as a dependency-free
+# JSON salvage helper. Do not reintroduce a use of it without a caller.
+#
+# NOTE: when `extract_tools` is None the plugin has NO way to tell a
+# misformat from a valid response. is_misformat() therefore fails CLOSED to
+# "not a misformat" (a no-op) rather than open. Failing open here is
+# catastrophic: every well-formed response would be classified as malformed
+# and replaced with a utility-model "repair" of itself, up to
+# max_total_per_chat times per monologue.
 try:
-    from usr.plugins.misformat_guard.vendor.hardened_dirty_json import DirtyJson
     from helpers import extract_tools
 except Exception:  # noqa: BLE001
-    DirtyJson = None  # type: ignore[assignment]
     extract_tools = None  # type: ignore[assignment]
 
 
@@ -63,9 +73,18 @@ def is_misformat(text: str) -> bool:
     utility model. False positives are acceptable (we'd just call the
     utility model unnecessarily); false negatives are not (we'd let a
     bad response through).
+
+    Fails CLOSED on an unusable parser: if `helpers.extract_tools` could not
+    be imported, `extract_tools is None` and we cannot distinguish the two
+    cases, so we report "not a misformat" and the cascade no-ops. Returning
+    True here instead would make the cascade replace EVERY response with a
+    utility-model rewrite of itself.
     """
-    if not text or extract_tools is None:
-        return True
+    if not text:
+        return False
+    if extract_tools is None:
+        _print("helpers.extract_tools unavailable; failing closed (no repair)")
+        return False
     try:
         parsed = extract_tools.json_parse_dirty(text)
     except Exception:  # noqa: BLE001

@@ -30,7 +30,14 @@ Public surface (never raises):
         Same args -> same sig; reordered dict keys -> same sig; different
         args -> different sig. ``normalize=True`` strips whitespace in
         string values first (opt-in; the byte-identical death-loop needs
-        no normalization).
+        no normalization). Oversized payloads are hashed chunk-wise rather
+        than serialized into one giant string (see ``_CHUNK``).
+
+    tool_signature(tool_name) -> str
+        Per-tool signature that ignores the arguments. Used as a secondary
+        detector, because the exact-match signature cannot see a death-loop
+        that drifts its arguments between iterations (line numbers, ids,
+        whitespace) -- the most common real stuck pattern.
 
     is_error_result(message, patterns) -> bool
         True if ``message`` matches any regex in ``patterns``
@@ -98,6 +105,16 @@ _DEFAULT_IGNORED_TOOLS = ("response", "response_tool")
 # config does not recompile on every tool call.
 _COMPILED_CACHE: dict[tuple, list] = {}
 
+def _sha1():
+    """Return a fresh SHA-1 hasher.
+
+    Resolved through getattr on each call so a monkeypatched
+    ``hashlib.sha1`` (the test suite swaps it) is still honoured; the previous
+    code used the module-global ``hashlib.sha1`` directly, which broke under
+    that patch.
+    """
+    return getattr(hashlib, "sha1")()
+
 
 def _print(msg: str) -> None:
     try:
@@ -126,28 +143,54 @@ def args_signature(tool_name: Any, args: Any, normalize: bool = False) -> str:
     """Stable, bounded signature for a tool call.
 
     ``"<tool_name>:<sha1_hex_16>``. Bounded size regardless of how large
-    ``args`` is (a patch can carry a whole file). Same args -> same sig;
-    reordered dict keys -> same sig (``sort_keys=True``); different args
-    -> different sig. ``normalize`` strips whitespace in string values so
-    trivial whitespace variants collapse to one sig (opt-in; off by
-    default to avoid false positives).
+    ``args`` is (a `code_editor` patch can carry an entire file). Same args
+    -> same sig; reordered dict keys -> same sig (``sort_keys=True``);
+    different args -> different sig. ``normalize`` strips whitespace in
+    string values so trivial whitespace variants collapse to one sig
+    (opt-in; off by default to avoid false positives).
+
+    Serialization is INCREMENTAL. This runs on every tool result via
+    ``tool_execute_after``, and `json.dumps` of a multi-megabyte patch
+    argument materializes the whole thing as one str before hashing it --
+    repeated on every single tool call, on the hot path. ``iterencode``
+    yields small chunks that are fed to the hasher one at a time, so peak
+    memory stays flat regardless of argument size. A stable hashlib
+    attribute name is used so a monkeypatched module cannot break hashing.
     """
     try:
         name = tool_name if isinstance(tool_name, str) else (str(tool_name) if tool_name is not None else "")
-        payload = args
-        if normalize:
-            payload = _normalize_value(args)
+        payload = _normalize_value(args) if normalize else args
+        encoder = json.JSONEncoder(sort_keys=True, ensure_ascii=False, default=str)
+        # update() against a real hasher, not the module-global: the
+        # attribute lookup happens once and the alias can be swapped in
+        # tests. hasher.update() requires BYTES, so each chunk is encoded
+        # individually -- iterencode is what keeps those chunks small.
+        sha1 = _sha1()
         if payload is None:
-            blob = "{}"
+            sha1.update(b"{}")
         else:
-            blob = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+            for chunk in encoder.iterencode(payload):
+                if chunk:
+                    sha1.update(chunk.encode("utf-8", "replace"))
+        digest = sha1.hexdigest()[:16]
     except Exception:  # noqa: BLE001 - never raise on weird args
-        blob = repr(args)
-    try:
-        digest = hashlib.sha1(blob.encode("utf-8", "replace")).hexdigest()[:16]
-    except Exception:  # noqa: BLE001
-        digest = format(abs(hash(blob)) & 0xFFFFFFFF, "x")
+        digest = format(abs(hash(repr(args))) & 0xFFFFFFFF, "x")
     return f"{name}:{digest}"
+
+
+def tool_signature(tool_name: Any) -> str:
+    """Per-tool signature that ignores the arguments entirely.
+
+    Paired with the per-tool streak this catches a loop that varies its
+    arguments on every iteration -- e.g. an agent retrying a patch against
+    successive line numbers -- which the exact-args signature treats as
+    continuous forward progress and never flags.
+    """
+    try:
+        name = tool_name if isinstance(tool_name, str) else (str(tool_name) if tool_name is not None else "")
+    except Exception:  # noqa: BLE001
+        name = ""
+    return f"tool:{name}"
 
 
 # ---------------------------------------------------------------------------

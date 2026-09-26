@@ -57,6 +57,9 @@ def _make_agent(enabled: bool = True, reset_on_warning: bool = True,
         params_persistent=params_persistent,
     )
 
+    # Synthetic texts for the markers the upstream classifies on. These
+    # override whatever is on disk so the test's detection is deterministic
+    # (the shipped prompts are prose and can be reworded at any time).
     prompts = {
         "fw.msg_misformat.md": MISFORMAT_TEXT,
         "fw.msg_repeat.md": REPEAT_TEXT,
@@ -70,8 +73,43 @@ def _make_agent(enabled: bool = True, reset_on_warning: bool = True,
         "fw.msg_unusable_response_limit.md": "stop: too many unusable responses",
     }
 
+    # Everything else resolves the way the framework resolves it.
+    #
+    # The upstream execute() reads several prompts UNCONDITIONALLY on entry
+    # (fw.msg_reasoning_only.md, fw.msg_thoughts_fallback.md, ...) before it
+    # classifies anything. A fixture that only listed a hand-picked few made
+    # this test depend on which prompts the upstream happens to touch: each
+    # new unconditional read became a KeyError here, so the suite was red for
+    # a reason that had nothing to do with this plugin.
+    #
+    # Resolution order mirrors `Agent.read_prompt` -> `files.read_prompt_file`,
+    # i.e. the root prompts/ dir first and then every plugin's prompts/ dir.
+    # This matters: fw.msg_thoughts_fallback.md is NOT in the root prompts/
+    # dir at all -- it ships with plugins/_context_doctor. The framework finds
+    # it only because read_prompt aggregates plugin prompt dirs.
+    _search_dirs = [Path(REPO_ROOT) / "prompts"]
+    _search_dirs += sorted(
+        (Path(REPO_ROOT) / "plugins").glob("*/prompts")
+    )
+    _real_cache: dict[str, str] = {}
+
     def read_prompt(name, **kwargs):
-        return prompts[name]
+        if name in prompts:
+            return prompts[name]
+        if name not in _real_cache:
+            for d in _search_dirs:
+                path = d / name
+                if path.is_file():
+                    _real_cache[name] = path.read_text(encoding="utf-8")
+                    break
+            else:
+                _real_cache[name] = ""
+        if not _real_cache[name]:
+            raise KeyError(
+                f"{name!r} is neither a test override nor a real prompt in any "
+                f"of {[str(d) for d in _search_dirs]}"
+            )
+        return _real_cache[name]
 
     cfg = {
         "enabled": enabled,

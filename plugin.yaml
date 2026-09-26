@@ -1,3 +1,20 @@
+# misformat_guard plugin manifest.
+#
+# The framework parses ONLY these keys (helpers/plugins.py PluginMetadata):
+# name, title, description, version, settings_sections, per_project_config,
+# per_agent_config, always_enabled. There is no model_config, so anything else
+# is silently dropped at runtime.
+#
+# Removed in v0.7.0 as dead:
+#   min_framework_version: 2.5.0  -- nothing in the framework (or this plugin)
+#                                    reads it, so a version gate that looks
+#                                    active is not. The v2.5 requirement is
+#                                    documented in AGENTS.md instead.
+#   discovery.feature_card         -- not a framework key.
+#
+# settings_sections drives discoverability: only `agent` and `external` mount
+# the plugin settings subsection, so `developer` produced a dead entry and was
+# dropped.
 name: misformat_guard
 title: Misformat Guard
 description: >
@@ -8,14 +25,9 @@ description: >
   loop none of the framework's own breakers catch. No core patch -- pure
   v2.5 extension hooks. See the README for the full architecture and
   configuration.
-version: 0.6.0
-min_framework_version: 2.5.0
+version: 0.7.0
 settings_sections:
   - agent
-  - developer
 per_project_config: true
 per_agent_config: true
 always_enabled: false
-# Discoverable in the Plugins UI as a feature card.
-discovery:
-  feature_card: true

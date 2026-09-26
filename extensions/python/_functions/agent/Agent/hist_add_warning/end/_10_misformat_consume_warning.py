@@ -54,6 +54,29 @@ from usr.plugins.misformat_guard.api import misformat_config
 UPSTREAM_STATE_KEY = "_unusable_response_failures"
 
 
+def _upstream_state_key_confirmed() -> bool:
+    """True when the framework's breaker still uses the key we write to.
+
+    This hook reaches into another extension's private module-level constant.
+    If upstream renames STATE_KEY the import fails (handled by the caller) or
+    the key silently stops matching (NOT handled) -- we would keep writing a
+    dead key while believing we were resetting the counter, and the framework
+    breaker would resume stopping the agent with no visible cause.
+
+    Verify against the real module rather than trusting the literal. Cheap:
+    one import, and a stale module fails closed to "stop resetting", which
+    is the safe direction (the framework keeps its own protection).
+    """
+    try:
+        from extensions.python._functions.agent.Agent.hist_add_warning.end import (  # type: ignore
+            _90_stop_unusable_response_loop as upstream,
+        )
+
+        return getattr(upstream, "STATE_KEY", None) == UPSTREAM_STATE_KEY
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _print(msg: str) -> None:
     sys.stderr.write("[misformat_guard:consume] " + msg + "\n")
     sys.stderr.flush()
@@ -117,9 +140,18 @@ class ConsumeMisformatWarning(Extension):
         if not isinstance(iteration, int):
             return
 
-        # Reset the upstream's counter. The upstream will read this on
-        # the SAME extension-point invocation (it runs after us by
-        # basename sort) and see count=0, then increment to 1.
+        # Fail safe: if we cannot confirm the upstream key, do not touch it.
+        if not _upstream_state_key_confirmed():
+            if cfg.get("verbose", False):
+                _print(
+                    "upstream STATE_KEY not confirmed; leaving the framework's "
+                    "cost circuit breaker untouched"
+                )
+            return
+
+        # Reset the upstream's counter. The upstream will read this on the
+        # SAME extension-point invocation (it runs after us by basename sort)
+        # and see count=0, then increment to 1.
         state[UPSTREAM_STATE_KEY] = {"iteration": iteration, "count": 0}
 
         if cfg.get("verbose", False):

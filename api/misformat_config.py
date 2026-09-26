@@ -19,6 +19,14 @@ DEFAULT_CONFIG_PATH = PLUGIN_DIR / "default_config.yaml"
 # Cached default config.
 _DEFAULT_CACHE: dict[str, Any] | None = None
 
+# Budget-counter keys in `loop_data.params_persistent`, shared by the primary
+# cascade (call_chat_model_turn/end/_20) and the process-tools safety net
+# (process_tools/end/_30). They live here rather than as per-module literals
+# because they are one shared budget: both cascades read and write the same
+# two counters, and the streak detector resets one of them.
+CASCADE_USED_STREAK_KEY = "_misformat_guard_cascade_used_in_streak"
+CASCADE_USED_TOTAL_KEY = "_misformat_guard_cascade_used_total"
+
 
 def _load_default_from_disk() -> dict[str, Any]:
     """Read default_config.yaml directly (used as a fallback only)."""

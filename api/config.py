@@ -50,12 +50,22 @@ _REPEAT_ACTIONS = ("warn", "stop", "warn_then_stop")
 
 
 def _coerce(key, value):
-    """Coerce the UI form value to the correct Python type."""
+    """Coerce the UI form value to the correct Python type.
+
+    A text input can deliver anything, so every numeric conversion is
+    guarded: an unguarded `int(value)` on a non-numeric string raised out of
+    the handler and turned a typo in the settings form into a 500.
+    """
     if isinstance(value, bool):
         return value
     if key in ("tool_repeat_warn_threshold", "tool_repeat_stop_threshold"):
         # 0 disables that half of the guard -- respect it (do NOT clamp to 1).
-        n = int(value)
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            # Not a number: fall back to the shipped default for this key
+            # rather than failing the whole save.
+            return 2 if key.endswith("warn_threshold") else 4
         return max(0, min(20, n))
     if key == "tool_repeat_action":
         if value not in _REPEAT_ACTIONS:
@@ -80,6 +90,19 @@ def _flatten_for_persist(overrides):
 
 
 class Config(ApiHandler):
+    """Read or write the plugin config.
+
+    GET is declared explicitly because the framework 405s any method missing
+    from get_methods() (helpers/api.py:255) — the default is POST only, so
+    the GET branch below used to be unreachable. CSRF stays on (it follows
+    requires_auth), which is correct for the write path; the settings panel
+    uses the framework's fetchApi so the token is sent.
+    """
+
+    @classmethod
+    def get_methods(cls) -> list[str]:
+        return ["GET", "POST"]
+
     async def process(self, input_data, request):
         method = (getattr(request, "method", "POST") or "POST").upper()
         # Build the current effective config (defaults + stored overrides).

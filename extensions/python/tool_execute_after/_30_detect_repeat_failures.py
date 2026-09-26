@@ -103,6 +103,27 @@ _WARN_PREAMBLE = "[TOOL-REPEAT-GUARD] "
 _STOP_PREAMBLE = "[TOOL-REPEAT-GUARD:STOP] "
 
 
+def _reset(state: dict, sig: str, tool_name: str) -> None:
+    """Clear both streaks in place.
+
+    Mutates rather than rebinds because the caller holds the same dict object
+    that params_persistent references; replacing it would drop the tracking.
+    """
+    state.clear()
+    state.update(
+        {
+            "sig": sig,
+            "count": 0,
+            "warned": False,
+            "last_tool": tool_name,
+            "last_error": "",
+            "tool_sig": "",
+            "tool_count": 0,
+            "tool_warned": False,
+        }
+    )
+
+
 class DetectRepeatFailures(Extension):
     async def execute(self, response: Any = None, tool_name: str = "", **kwargs: Any):
         try:
@@ -118,6 +139,7 @@ class DetectRepeatFailures(Extension):
             # plugin version) could be missing one of these symbols. Fall
             # back to a no-op so the tool loop never crashes mid-flight.
             args_signature = getattr(tool_repeat, "args_signature", None)
+            tool_signature = getattr(tool_repeat, "tool_signature", None)
             is_error_result = getattr(tool_repeat, "is_error_result", None)
             load_state = getattr(tool_repeat, "load_state", None)
             if args_signature is None or is_error_result is None or load_state is None:
@@ -152,16 +174,7 @@ class DetectRepeatFailures(Extension):
             if not is_error:
                 # A non-error result means progress (the call worked, or at
                 # worst produced neutral output). Reset the streak.
-                state.clear()
-                state.update(
-                    {
-                        "sig": sig,
-                        "count": 0,
-                        "warned": False,
-                        "last_tool": tool_name,
-                        "last_error": "",
-                    }
-                )
+                _reset(state, "", "")
                 return
 
             prev_sig = state.get("sig")
@@ -169,18 +182,43 @@ class DetectRepeatFailures(Extension):
                 state["count"] = int(state.get("count", 0) or 0) + 1
                 # warned stays as-is for the same sig
             else:
-                # A new (tool,args) is failing -- start a fresh streak.
-                state["sig"] = sig
+                # A new (tool,args) is failing -- start a fresh streak at 1.
+                # _reset() zeroes the counters, so seed them here: this call
+                # IS the first failure of the new streak.
+                _reset(state, sig, tool_name)
                 state["count"] = 1
-                state["warned"] = False
             state["last_tool"] = tool_name
             last_error = _short_error(message)
             state["last_error"] = last_error
 
+            # Secondary, argument-insensitive streak for the same tool.
+            #
+            # The exact-args signature treats a loop that drifts its
+            # arguments as continuous progress, so an agent retrying a patch
+            # against successive line numbers -- a very common stuck pattern
+            # -- is never flagged. Counting consecutive errors per tool
+            # catches it, and it cannot fire on progress, because a
+            # successful call resets the tool counter too.
+            #
+            # A HIGHER threshold is used for the looser signal: several
+            # different failing calls with the same tool can be legitimate
+            # exploration, whereas N identical ones is not.
+            tsig = tool_signature(tool_name) if tool_signature else None
+            if tsig is not None:
+                if state.get("tool_sig") == tsig:
+                    state["tool_count"] = int(state.get("tool_count", 0) or 0) + 1
+                else:
+                    state["tool_sig"] = tsig
+                    state["tool_count"] = 1
+
             count = int(state.get("count", 0) or 0)
+            tool_count = int(state.get("tool_count", 0) or 0)
             action = rc["action"]
             warn_t = rc["warn_threshold"]
             stop_t = rc["stop_threshold"]
+            # Looser threshold for the argument-insensitive signal.
+            tool_stop_t = stop_t * 2
+            tool_warn_t = warn_t * 2
 
             # --- hard stop (stronger; checked first) ------------------------
             if stop_t > 0 and count >= stop_t and action in ("stop", "warn_then_stop"):
@@ -205,18 +243,40 @@ class DetectRepeatFailures(Extension):
                     return
                 # Reset the streak so a future call (if the loop somehow
                 # continues) starts fresh.
-                state.clear()
-                state.update(
-                    {
-                        "sig": sig,
-                        "count": 0,
-                        "warned": False,
-                        "last_tool": tool_name,
-                        "last_error": "",
-                    }
-                )
+                _reset(state, "", "")
                 if rc["verbose"]:
                     _print("hard-stop at count=" + str(count) + " tool=" + str(tool_name))
+                return
+
+            if (
+                tool_count > 0
+                and tool_stop_t > 0
+                and tool_count >= tool_stop_t
+                and action in ("stop", "warn_then_stop")
+            ):
+                stop_msg = (
+                    _STOP_PREAMBLE
+                    + "Stopped after "
+                    + str(tool_count)
+                    + " consecutive failing '"
+                    + str(tool_name)
+                    + "' calls with differing arguments (last error: "
+                    + (last_error or "unknown")
+                    + "). Each retry adjusted the arguments slightly and still "
+                    + "failed, so this is not converging. Re-read the target "
+                    + "file/state and verify your assumption before trying again."
+                )
+                try:
+                    response.message = stop_msg
+                    response.break_loop = True
+                except Exception:  # noqa: BLE001
+                    return
+                _reset(state, "", "")
+                if rc["verbose"]:
+                    _print(
+                        "hard-stop (args-drift) at tool_count="
+                        + str(tool_count) + " tool=" + str(tool_name)
+                    )
                 return
 
             # --- soft warn (one-shot per sig-streak) ------------------------
@@ -252,6 +312,49 @@ class DetectRepeatFailures(Extension):
                 state["warned"] = True
                 if rc["verbose"]:
                     _print("warn at count=" + str(count) + " tool=" + str(tool_name))
+                return
+
+            # --- soft warn, argument-drift streak ---------------------------
+            # Fires only when the EXACT-args streak has NOT already warned.
+            # The two signals are mutually exclusive fallbacks for the same
+            # underlying stuck loop: without this gate a byte-identical
+            # death-loop would emit both warnings (the exact one, then the
+            # drift one once its doubled threshold is reached), which is
+            # pure noise for the model.
+            if (
+                tool_count > 0
+                and tool_warn_t > 0
+                and tool_count >= tool_warn_t
+                and count < warn_t
+                and action in ("warn", "warn_then_stop")
+                and not state.get("tool_warned")
+            ):
+                directive = (
+                    "You have called '"
+                    + str(tool_name)
+                    + "' "
+                    + str(tool_count)
+                    + " times in a row and every call returned an error ("
+                    + (last_error or "unknown")
+                    + "). Your arguments are changing slightly each time, but "
+                    + "the result is not improving. Stop adjusting blindly: "
+                    "RE-READ the current state of the target, confirm your "
+                    + "assumption about it, and then make one deliberate change."
+                )
+                try:
+                    response.message = _WARN_PREAMBLE + directive + "\n\n" + message
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    self.agent.hist_add_warning(message=directive)
+                except Exception:  # noqa: BLE001
+                    pass
+                state["tool_warned"] = True
+                if rc["verbose"]:
+                    _print(
+                        "warn (args-drift) at tool_count="
+                        + str(tool_count) + " tool=" + str(tool_name)
+                    )
                 return
         except Exception:  # noqa: BLE001 - never raise out of a hook
             try:

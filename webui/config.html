@@ -1,5 +1,5 @@
 <!--
-  misformat_guard WebUI configuration panel (v0.6.0).
+  misformat_guard WebUI configuration panel (v0.7.0).
 
   All settings are editable from the UI; nothing requires editing
   default_config.yaml by hand. Changes are persisted to the framework
@@ -25,7 +25,7 @@
       <span x-text="ok ? '🟢' : '🔴'"></span>
       Live counters
       <small style="opacity: 0.6; font-weight: normal;">
-        (auto-refresh every 5s; click <em>Refresh</em> to update now)
+        (auto-refresh every 60s; click <em>Refresh</em> to update now)
       </small>
     </h4>
     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px; font-size: 12px;">
@@ -319,7 +319,7 @@
       },
       async init() {
         await this.refresh();
-        // The dashboard-store.js polls /stats every 5s and updates
+        // The dashboard-store.js polls /stats every 60s and updates
         // elements with data-mg-stat. We just stamp the time.
         if (window.MisformatGuardDashboard && window.MisformatGuardDashboard.stats) {
           setInterval(() => { this.lastRefresh = new Date().toLocaleTimeString(); }, 5000);

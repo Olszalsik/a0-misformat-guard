@@ -16,6 +16,13 @@ def _int_or(cfg, key, default):
 
 
 class Health(ApiHandler):
+    """Read-only health/version snapshot. GET is declared explicitly because
+    the framework 405s any method missing from get_methods() (helpers/api.py)."""
+
+    @classmethod
+    def get_methods(cls) -> list[str]:
+        return ["GET", "POST"]
+
     async def process(self, input_data, request):
         try:
             cfg = misformat_config.get_config(None)
